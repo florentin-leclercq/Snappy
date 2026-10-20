@@ -511,6 +511,14 @@ class MainWindow(QMainWindow):
         sort = self.sort.currentData()
         clips = self.library.clips(self._filter_fav, self._filter_group, self.search.text().strip(),
                                    self.period.current() or "all", self._day, sort)
+        self._update_header()
+        self.count_lbl.setText(tr("{n} clip", n=len(clips)) if len(clips) == 1 else tr("{n} clips", n=len(clips)))
+        self.gallery.show_group_chip = not self._filter_group
+        self.gallery.set_clips(clips, group_by_day=sort in ("recent", "old"))
+        self._show_gallery_or_empty(clips)
+
+    def _update_header(self) -> None:
+        """Title and statistics of the view (number of clips, size, total length)."""
         in_view = self.library.clips(self._filter_fav, self._filter_group)
         if self._filter_fav:
             title = tr("Favorites")
@@ -532,9 +540,8 @@ class MainWindow(QMainWindow):
             self.title_box.show()
             self.page_title.setText(title)
             self.page_sub.setText(stats)
-        self.count_lbl.setText(tr("{n} clip", n=len(clips)) if len(clips) == 1 else tr("{n} clips", n=len(clips)))
-        self.gallery.show_group_chip = not self._filter_group
-        self.gallery.set_clips(clips, group_by_day=sort in ("recent", "old"))
+
+    def _show_gallery_or_empty(self, clips: list[Clip]) -> None:
         if clips:
             self.gallery_stack.setCurrentIndex(0)
         else:
@@ -567,6 +574,15 @@ class MainWindow(QMainWindow):
     def set_thumbnail(self, file: str, pixmap: QPixmap) -> None:
         self.thumbs[file] = pixmap
         self.gallery.set_thumb(file, pixmap)
+        # Clips added outside Snappy get their length while their thumbnail is made: the total
+        # length shown in the header is brought up to date (once for a batch of thumbnails).
+        if not getattr(self, "_header_pending", False):
+            self._header_pending = True
+            QTimer.singleShot(300, self._update_header_later)
+
+    def _update_header_later(self) -> None:
+        self._header_pending = False
+        self._update_header()
 
     def set_sprite(self, file: str, pixmap: QPixmap) -> None:
         self.gallery.set_sprite(file, pixmap)

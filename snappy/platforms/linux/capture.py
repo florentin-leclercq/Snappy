@@ -149,7 +149,8 @@ def list_monitors() -> list[tuple[str, str]]:
     out = []
     for line in lines:
         name, sep, size = line.partition("|")
-        if sep and name not in ("window", "region", "focused", "portal", "screen"):
+        # gpu-screen-recorder 6 also lists the cameras ("/dev/video0|1920x1080@30hz|mjpeg").
+        if sep and name not in ("window", "region", "focused", "portal", "screen") and not name.startswith("/dev/"):
             out.append((name, size))
     return out
 

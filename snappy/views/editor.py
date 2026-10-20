@@ -662,6 +662,17 @@ class EditorPage(QWidget):
                 self.preview.play(self.player.position() / 1000)
 
     def _on_media_status(self, status) -> None:
+        if status == QMediaPlayer.EndOfMedia and self.clip and not self._resume and not self._scrub_resume:
+            # The file can end before the excerpt end seen by the tick (audio a few ms longer than the
+            # video, 25 ms tick): the player stops by itself, so the loop is handled here too.
+            if self.loop:
+                self.seek(self.timeline.t_in)
+                self.player.play()
+                if self.preview.loaded:
+                    self.preview.play(self.timeline.t_in)
+            else:
+                self.preview.pause()
+            return
         if status == QMediaPlayer.LoadedMedia and self.clip and self.clip.n_screens > 1:
             self._active_video = -1   # forced at the next tick
         if status == QMediaPlayer.LoadedMedia and self._resume:
@@ -774,8 +785,10 @@ class EditorPage(QWidget):
             if k != self._active_video and k < len(self.player.videoTracks()):
                 self._active_video = k
                 self.player.setActiveVideoTrack(k)
-                if not playing:   # paused, the player keeps the old screen's frame: ask for it again
-                    self.player.setPosition(self.player.position())
+                # Seek again to the current position: paused, the player keeps the old screen's frame;
+                # playing, a track switch right after a seek (loop, jump over a removed passage) leaves
+                # the video frozen for seconds (Qt FFmpeg backend) while the clock goes on.
+                self.player.setPosition(self.player.position())
         tl.set_position(pos)
         self._update_time(pos)
 

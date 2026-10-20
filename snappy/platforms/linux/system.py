@@ -444,10 +444,12 @@ _players: list[subprocess.Popen] = []
 
 
 def play_wav(path: Path) -> None:
-    """Plays a sound without waiting, under the name "Snappy" (can be isolated like the rest of Snappy)."""
+    """Plays a sound without waiting, under the name "Snappy" (can be isolated like the rest of Snappy).
+    No media.role = "Notification": the desktop's "notification sounds" setting (often muted) would
+    silence it too, while Snappy has its own switch and volume for this confirmation."""
     _players[:] = [p for p in _players if p.poll() is None]
     if shutil.which("pw-play"):
-        cmd = ["pw-play", "-P", f'{{ application.name = "{APP_NAME}" media.role = "Notification" }}', str(path)]
+        cmd = ["pw-play", "-P", f'{{ application.name = "{APP_NAME}" }}', str(path)]
     elif shutil.which("paplay"):
         cmd = ["paplay", f"--client-name={APP_NAME}", str(path)]
     elif shutil.which("aplay"):

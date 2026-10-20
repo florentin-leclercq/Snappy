@@ -211,6 +211,8 @@ class AppController(QObject):
             return
         if self.is_recording:
             self._stopping_record = True
+            if self.settings.play_sound_on_save:   # every press of the shortcut is heard, like a save
+                sounds.play(self.settings.sound, self.settings.sound_volume)
             job = StopRecordingJob(self.recorder, self.library, self._record_ctx)
             job.signals.done.connect(self._on_recording_saved)
             self.pool.start(job)

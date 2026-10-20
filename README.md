@@ -94,7 +94,13 @@ On Linux, Snappy hands the capture over to **gpu-screen-recorder**:
   Snappy falls back by itself to its FFmpeg engine (`x11grab`, sound read through PulseAudio / PipeWire). In this mode,
   the sound is not split per application: the game track holds the whole audio output. Pick the "FFmpeg X11" method in
   the settings to use it from the start.
-- On Wayland, the save confirmation is a desktop notification (a window cannot place itself over the game).
+- **Confirmation over the game on Wayland**: a small toast in the layer-shell "overlay" layer (KDE, Hyprland,
+  Sway…), on the recorded screen, that never takes the focus and lets the clicks through. It needs PyGObject
+  and gtk4-layer-shell in the system Python (`pacman -S python-gobject gtk4-layer-shell`); otherwise, and on
+  GNOME, the confirmation is a desktop notification.
+- **Manual recording** (`Alt+F9` by default, press again to stop): records everything from now on, on top of the
+  replay, through gpu-screen-recorder's command socket (no second encode). With several screens, they are aligned
+  on the timestamp of their first frame. The recording time shows in the window and the notification area.
 
 ## Building the executable (Windows)
 
@@ -109,6 +115,7 @@ Produces `dist\Snappy\Snappy.exe`, self-contained, with FFmpeg included.
 | Where | Key | Action |
 |---|---|---|
 | Everywhere | `Alt+F10` (configurable) | Save a clip |
+| Everywhere (Linux) | `Alt+F9` (configurable) | Start / stop a recording |
 | Gallery | `Ctrl`/`Shift` + click, `Ctrl+A`, `Esc` | Multiple selection |
 | Editor | `Space` | Play / pause |
 | Editor | `I` / `O` | Excerpt start / end |

@@ -602,6 +602,11 @@ class EditorTimeline(QWidget):
                     return {"kind": "cut_a", "i": i}
                 if abs(x - self.t_to_x(b)) <= 5:
                     return {"kind": "cut_b", "i": i}
+            if kind == "strip":   # inside a removed passage: drag it to move it (a click still seeks)
+                t = self.x_to_t(x)
+                for i, (a, b) in enumerate(self.cuts):
+                    if a < t < b:
+                        return {"kind": "cut_move", "i": i}
             return {"kind": "seek"}
         if kind == "screen":
             if x < self.x0:
@@ -681,6 +686,15 @@ class EditorTimeline(QWidget):
             kind = hit["kind"] = "seek"       # click in the track, far from the line: move the playhead
         if kind in ("none", "lane_label"):
             return
+        if kind == "cut_move":
+            # The passage keeps its length; it goes neither over its neighbours nor out of the clip.
+            a, b = self.cuts[hit["i"]]
+            lo = max([0.0] + [cb for j, (ca, cb) in enumerate(self.cuts) if j != hit["i"] and cb <= a])
+            hi = min([self.duration] + [ca for j, (ca, cb) in enumerate(self.cuts) if j != hit["i"] and ca >= b])
+            self._drag = {"kind": "cut_move", "i": hit["i"], "x": x, "a": a, "b": b, "lo": lo, "hi": hi,
+                          "moved": False}
+            self.setCursor(Qt.ClosedHandCursor)
+            return
         self._drag = dict(hit)
         if kind == "seek":
             self.scrubbing.emit(True)
@@ -702,7 +716,8 @@ class EditorTimeline(QWidget):
             cursor = {"in": Qt.SizeHorCursor, "out": Qt.SizeHorCursor, "cut_a": Qt.SizeHorCursor,
                       "cut_b": Qt.SizeHorCursor, "angle": Qt.SizeHorCursor, "point": Qt.SizeAllCursor,
                       "line": Qt.SizeVerCursor, "mute": Qt.PointingHandCursor, "solo": Qt.PointingHandCursor,
-                      "lane_label": Qt.ArrowCursor, "screen": Qt.PointingHandCursor}.get(kind, Qt.PointingHandCursor)
+                      "lane_label": Qt.ArrowCursor, "screen": Qt.PointingHandCursor,
+                      "cut_move": Qt.OpenHandCursor}.get(kind, Qt.PointingHandCursor)
             self.setCursor(cursor)
             self._set_hover(x, hit)
             self.update()
@@ -723,7 +738,13 @@ class EditorTimeline(QWidget):
             return
         if drag["kind"] == "line" and not drag["moved"]:
             self._add_point(drag["lane"], self.x_to_t(drag["x"]))
-        if drag["kind"] in ("new_cut", "cut_a", "cut_b"):
+        if drag["kind"] == "cut_move" and not drag["moved"]:   # plain click in a passage: seek there
+            t = self.x_to_t(drag["x"])
+            self.position = t
+            self.seekRequested.emit(t)
+            self.update()
+            return
+        if drag["kind"] in ("new_cut", "cut_a", "cut_b", "cut_move"):
             self.cuts = [list(c) for c in merge_ranges([tuple(c) for c in self.cuts], MIN_CUT)]
             self.cutsChanged.emit([tuple(c) for c in self.cuts])
         self._set_hover(e.position().x(), self._hit(e.position().x(), e.position().y()))
@@ -749,6 +770,15 @@ class EditorTimeline(QWidget):
         elif kind == "new_cut":
             self.cuts[-1] = [min(d["t0"], t), max(d["t0"], t)]
             self.seekRequested.emit(t)
+        elif kind == "cut_move":
+            if not d["moved"] and abs(x - d["x"]) < 3:
+                return
+            d["moved"] = True
+            dt = self.x_to_t(x) - self.x_to_t(d["x"])
+            dt = min(max(dt, d["lo"] - d["a"]), d["hi"] - d["b"])
+            self.cuts[d["i"]] = [round(d["a"] + dt, 3), round(d["b"] + dt, 3)]
+            self.cutsChanged.emit([tuple(c) for c in self.cuts])
+            self.update()
         elif kind in ("cut_a", "cut_b"):
             a, b = self.cuts[d["i"]]
             self.cuts[d["i"]] = [min(t, b - MIN_CUT), b] if kind == "cut_a" else [a, max(t, a + MIN_CUT)]

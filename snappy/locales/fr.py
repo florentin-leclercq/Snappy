@@ -374,8 +374,8 @@ STRINGS: dict[str, str] = {
     "Excerpt start at the playhead (I)": "Début de l'extrait à la tête de lecture (I)",
     "Excerpt end at the playhead (O)": "Fin de l'extrait à la tête de lecture (O)",
     "Remove": "Retirer",
-    "C: start of the passage to remove, then C at its end.\nOr Shift + drag on the filmstrip. Right-click a passage to put it back.":
-        "C : début du passage à retirer, puis C à la fin.\nOu Maj + glisser sur la pellicule. Clic droit sur un passage pour le remettre.",
+    "C: start of the passage to remove, then C at its end.\nOr Shift + drag on the filmstrip. Drag a passage to move it, its edges to resize it. Right-click a passage to put it back.":
+        "C : début du passage à retirer, puis C à la fin.\nOu Maj + glisser sur la pellicule. Glisser un passage pour le déplacer, ses bords pour l'ajuster. Clic droit sur un passage pour le remettre.",
     "Undo (Ctrl+Z)": "Annuler (Ctrl+Z)",
     "Redo (Ctrl+Y)": "Rétablir (Ctrl+Y)",
     "Mute the playback (M)": "Couper l'écoute (M)",
@@ -416,8 +416,10 @@ STRINGS: dict[str, str] = {
     "Passage to remove from {time}: press C at the end of the passage (Esc to cancel).":
         "Passage à retirer à partir de {time} : appuyez sur C à la fin du passage (Échap pour annuler).",
     "Drag the orange handles or I / O for the excerpt": "Glissez les poignées orange ou I / O pour l'extrait",
-    "C … C or Shift + drag: remove a passage": "C … C ou Maj + glisser : retirer un passage",
-    "click a screen row (or 1, 2…): switch screens": "clic sur une rangée d'écran (ou 1, 2…) : basculer d'écran",
+    "C … C or Shift + drag: remove a passage, drag it to move it":
+        "C … C ou Maj + glisser : retirer un passage, le glisser pour le déplacer",
+    "click a screen row (or 1, 2…, B: next screen): switch screens":
+        "clic sur une rangée d'écran (ou 1, 2…, B : écran suivant) : basculer d'écran",
     "tracks: drag the line for the volume, click it for a point":
         "pistes : glissez la ligne pour le volume, clic dessus pour un point",
     "Ctrl + wheel: zoom, Shift + wheel: move in time, Alt + wheel: track height":

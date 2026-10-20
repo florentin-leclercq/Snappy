@@ -297,7 +297,7 @@ class EditorPage(QWidget):
             (Qt.Key_Comma, lambda: self.step(-1 / 60)), (Qt.Key_Period, lambda: self.step(1 / 60)),
             (Qt.Key_Home, lambda: self.seek(self.timeline.t_in)), (Qt.Key_End, lambda: self.seek(self.timeline.t_out)),
             (QKeySequence.Undo, self.undo), (QKeySequence.Redo, self.redo), ("Ctrl+Y", self.redo),
-            (Qt.Key_F11, self.toggle_fullscreen), ("Ctrl+E", self.export),
+            (Qt.Key_F11, self.toggle_fullscreen), ("Ctrl+E", self.export), (Qt.Key_B, self.switch_next),
         ] + [(getattr(Qt, f"Key_{k + 1}"), (lambda k=k: self.switch_here(k))) for k in range(6)]
         for key, fn in shortcuts:
             sc = QShortcut(QKeySequence(key), self)
@@ -399,7 +399,8 @@ class EditorPage(QWidget):
         self.cut_btn.setIcon(glyph_icon("cut"))
         self.cut_btn.setObjectName("ghost")
         self.cut_btn.setToolTip(tr("C: start of the passage to remove, then C at its end.\n"
-                                   "Or Shift + drag on the filmstrip. Right-click a passage to put it back."))
+                                   "Or Shift + drag on the filmstrip. Drag a passage to move it, its edges to "
+                                   "resize it. Right-click a passage to put it back."))
         self.cut_btn.setFocusPolicy(Qt.NoFocus)
         self.cut_btn.clicked.connect(self.cut_mark)
         bar.addWidget(self.cut_btn)
@@ -725,11 +726,25 @@ class EditorPage(QWidget):
         self.mute_btn.setIcon(glyph_icon("mute" if muted else "volume"))
 
     def toggle_fullscreen(self) -> None:
-        self.video.setFullScreen(not self.video.isFullScreen())
-        if self.video.isFullScreen():
+        if not self.video.isFullScreen():
+            # The video becomes a separate window: without a screen, the compositor picks one (on
+            # Wayland, often another screen than Snappy's). Its native window is created on the
+            # screen of the Snappy window before going full screen.
+            screen = self.window().screen()
+            self.video.setWindowFlags(self.video.windowFlags() | Qt.Window)
+            self.video.winId()
+            handle = self.video.windowHandle()
+            if handle is not None and screen is not None:
+                handle.setScreen(screen)
+                self.video.setGeometry(screen.geometry())
+            self.video.setFullScreen(True)
             self.video.activateWindow()
             self.video.setFocus()
         else:
+            self.video.setFullScreen(False)
+            if self.video.isWindow():   # back into the editor page
+                self.video.setWindowFlags(self.video.windowFlags() & ~Qt.Window)
+                self.video.show()
             self.window().activateWindow()
             self.setFocus()
 
@@ -872,14 +887,30 @@ class EditorPage(QWidget):
             self.timeline.set_angle_at(self.player.position() / 1000, k)
             self._commit()
 
+    def switch_next(self) -> None:
+        """B: switches the edit at the playhead — to the screen shown in the preview if one is
+        forced (Screen 1 / Screen 2 buttons), otherwise to the next screen."""
+        if not self.clip or self.clip.n_screens < 2:
+            return
+        pos = self.player.position() / 1000
+        current = E.angle_at(self.angles, pos)
+        if self.preview_screen is not None and self.preview_screen != current:
+            target = self.preview_screen
+        else:
+            order = [k for k in self.screen_order if k < self.clip.n_screens] or list(range(self.clip.n_screens))
+            target = order[(order.index(current) + 1) % len(order)] if current in order else order[0]
+        self.timeline.set_angle_at(pos, target)
+        self._commit()
+
     def _update_hint(self) -> None:
         if self.timeline.pending_cut is not None:
             self.hint.setText(tr("Passage to remove from {time}: press C at the end of the passage (Esc to cancel).",
                                  time=fmt_clock(self.timeline.pending_cut)))
             return
-        parts = [tr("Drag the orange handles or I / O for the excerpt"), tr("C … C or Shift + drag: remove a passage")]
+        parts = [tr("Drag the orange handles or I / O for the excerpt"),
+                 tr("C … C or Shift + drag: remove a passage, drag it to move it")]
         if self.clip and self.clip.n_screens > 1:
-            parts.append(tr("click a screen row (or 1, 2…): switch screens"))
+            parts.append(tr("click a screen row (or 1, 2…, B: next screen): switch screens"))
         if self.timeline.lanes:
             parts.append(tr("tracks: drag the line for the volume, click it for a point"))
         parts.append(tr("Ctrl + wheel: zoom, Shift + wheel: move in time, Alt + wheel: track height"))

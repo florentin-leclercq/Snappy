@@ -35,7 +35,8 @@ The interface is available in English and French: it follows the system language
 - **Accent color** of your choice (Settings › Appearance): a few ready-made colors, an exact color, or the system one. Applied right away.
 
 **Editor**
-- Excerpt start / end, **removed passages** (`C` … `C`, `Shift` + drag, right-click to put back), undo / redo.
+- Excerpt start / end, **removed passages** (`C` … `C`, `Shift` + drag; drag a passage to move it, its edges to
+  resize it; right-click to put back), undo / redo.
 - **Multi-screen editing**: each screen has its row of previews on the timeline; switch from one screen to another along the clip (click on the row, keys `1`, `2`…), preview of the multicam edit or of a single screen.
 - **Mixing on the timeline**: drag the line of a track for its volume (0–200 %, shown on hover), click on it to add points and draw a **volume curve**; M (mute) and S (solo) buttons; the waveform follows the volume that was set (red where it clips). Playback mixes the tracks live.
 - **Timeline zoom**: `Ctrl` + wheel or pinch on the touchpad (around the mouse, down to 1 s across the whole width), `Shift` + wheel to move in time, double-click on the ruler to see everything again; `Alt` + wheel for the track height. The wheel alone scrolls the tracks.
@@ -121,6 +122,7 @@ Produces `dist\Snappy\Snappy.exe`, self-contained, with FFmpeg included.
 | Editor | `I` / `O` | Excerpt start / end |
 | Editor | `C` then `C` | Remove a passage |
 | Editor | `1`, `2`… | Switch to that screen at the playhead |
+| Editor | `B` | Switch to the next screen at the playhead (or to the one forced in the preview) |
 | Editor | `←` / `→`, `,` / `.` | ±1 s, previous / next frame |
 | Editor | `Ctrl+Z` / `Ctrl+Y` | Undo / redo |
 | Editor | `L`, `M`, `F11` | Loop, mute playback, full screen |

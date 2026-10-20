@@ -229,16 +229,26 @@ class AppController(QObject):
                 parts.append(clip.group)
             if clip.n_screens > 1:
                 parts.append(tr("{n} screens", n=clip.n_screens))
-            self._show_toast(tr("Clip saved"), " · ".join(parts) + " — " + tr("click to edit it"), thumb)
+            if system.OVERLAY_TOAST:
+                subtitle = " · ".join(parts) + " — " + tr("click to edit it")
+            else:   # the Wayland overlay lets the clicks through to the game
+                subtitle = " · ".join(parts)
+            self._show_toast(tr("Clip saved"), subtitle, thumb, thumb_path=str(self.library.thumb_path(clip)))
 
-    def _show_toast(self, title: str, subtitle: str, thumb=None, ok: bool = True, ms: int = 3500) -> None:
+    def _show_toast(self, title: str, subtitle: str, thumb=None, ok: bool = True, ms: int = 3500,
+                    thumb_path: str = "") -> None:
         """Notification on the recorded screen (the game's), without taking the focus. On Wayland,
-        where a window cannot choose its place, it is a desktop notification."""
-        if not system.OVERLAY_TOAST:
-            self.tray.notify(f"{title} — {subtitle}" if subtitle else title, "info" if ok else "warning", ms)
-            return
+        where a regular window cannot choose its place, a layer-shell overlay when the desktop
+        supports it, otherwise a desktop notification."""
         screens = QGuiApplication.screens()
         screen = screens[min(self.settings.monitor_index, len(screens) - 1)] if screens else None
+        if not system.OVERLAY_TOAST:
+            overlay = getattr(system, "show_overlay_toast", None)
+            if overlay and overlay(title, subtitle, ok=ok, ms=ms, monitor=screen.name() if screen else "",
+                                   thumb=thumb_path):
+                return
+            self.tray.notify(f"{title} — {subtitle}" if subtitle else title, "info" if ok else "warning", ms)
+            return
         self.toast.show_message(title, subtitle, thumb, ok=ok, ms=ms, screen=screen)
 
     def _open_last_clip(self) -> None:

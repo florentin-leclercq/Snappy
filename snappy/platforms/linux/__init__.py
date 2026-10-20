@@ -11,7 +11,8 @@ from .capture import (CAN_CAPTURE, DEFAULT_METHOD, DIRECT_AUDIO, ENCODER_CHOICES
 from .process import BACKGROUND, EXE_SUFFIX, NO_WINDOW, boost_priority, kill_with_parent, kill_with_parent_pid
 from .system import (CHAT_APPS, NAME, OVERLAY_TOAST, TEXT, accent_color, buffer_dir, cache_dir, data_dir,
                      enable_dpi_awareness, foreground_app_info, open_folder, play_wav, reveal, send_to_recycle_bin,
-                     set_app_id, set_autostart, steam_dirs, steam_value, system_sounds, videos_dir)
+                     set_app_id, set_autostart, show_overlay_toast, steam_dirs, steam_value, system_sounds,
+                     videos_dir)
 
 
 def parse_hotkey(text: str):
@@ -36,5 +37,5 @@ __all__ = [
     "video_prefilter", "audio_pipe_name", "open_audio_pipe", "make_capture_source", "capture_plan",
     "list_microphones", "audio_apps", "prepare_audio_process", "TEXT", "CHAT_APPS", "OVERLAY_TOAST",
     "system_sounds", "ENCODER_VENDORS", "ENCODER_CHOICES", "render_node", "replay_buffer_class",
-    "DIRECT_AUDIO", "audio_input_args",
+    "DIRECT_AUDIO", "audio_input_args", "show_overlay_toast",
 ]

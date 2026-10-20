@@ -45,6 +45,49 @@ DESKTOP_ID = "snappy"
 
 
 # --------------------------------------------------------------------------
+# Wayland toast over the game (layer-shell, see overlay_toast.py)
+# --------------------------------------------------------------------------
+_OVERLAY_SCRIPT = Path(__file__).with_name("overlay_toast.py")
+
+
+@functools.lru_cache(maxsize=1)
+def _overlay_python() -> str | None:
+    """System Python able to run overlay_toast.py (PyGObject + gtk4-layer-shell), or None.
+    Snappy's own Python (venv, PyInstaller) usually has no PyGObject."""
+    if not os.environ.get("WAYLAND_DISPLAY"):
+        return None
+    if not (glob.glob("/usr/lib*/girepository-1.0/Gtk4LayerShell-1.0.typelib")
+            or glob.glob("/usr/lib/*/girepository-1.0/Gtk4LayerShell-1.0.typelib")):
+        return None
+    python = shutil.which("python3", path="/usr/bin:/bin")
+    if not python:
+        return None
+    try:
+        probe = subprocess.run([python, "-I", "-c", "import gi; gi.require_version('Gtk4LayerShell', '1.0')"],
+                               capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return python if probe.returncode == 0 else None
+
+
+def show_overlay_toast(title: str, subtitle: str, ok: bool = True, ms: int = 3500,
+                       monitor: str = "", thumb: str = "") -> bool:
+    """Shows a toast over the game on Wayland (layer-shell). False if it is not possible here:
+    the caller then uses a desktop notification."""
+    python = _overlay_python()
+    if not python:
+        return False
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV")}
+    try:
+        subprocess.Popen([python, "-I", str(_OVERLAY_SCRIPT), title, subtitle, "1" if ok else "0", str(ms),
+                          monitor, thumb], env=env, start_new_session=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        return False
+    return True
+
+
+# --------------------------------------------------------------------------
 # Folders
 # --------------------------------------------------------------------------
 def _xdg(var: str, default: str) -> Path:

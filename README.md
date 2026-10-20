@@ -76,6 +76,12 @@ snappy              # or ./run.sh from this folder
 ./uninstall.sh      # removes the menu entry, the login item and the shortcut (clips and settings are kept)
 ```
 
+**Updates**: installed from a git clone, Snappy updates itself from GitHub when it starts (`scripts/update.sh`,
+called by `run.sh`; about 0.4 s). It never blocks the launch: offline, Snappy already running, local edits not
+committed, a conflict or a failed dependency install, and the current version starts as it is (details in
+`~/.cache/Snappy/update.log`). Desktop shortcuts never trigger it. Commits of your own are replayed on top of
+the new version. `SNAPPY_NO_UPDATE=1` turns it off; `SNAPPY_UPDATE_REF` picks the branch (default `origin/main`).
+
 On Linux, Snappy hands the capture over to **gpu-screen-recorder**:
 
 - **Video**: direct capture of the screens (KMS on Wayland, X11 otherwise), or the desktop portal (permission asked

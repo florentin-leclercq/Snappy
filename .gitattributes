@@ -1,0 +1,2 @@
+# Linux scripts: always Unix line endings (bash rejects the carriage return of Windows line endings)
+*.sh text eol=lf

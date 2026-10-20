@@ -1,0 +1,6 @@
+PySide6>=6.6
+numpy>=1.26
+psutil>=5.9
+# Audio capture on Windows (WASAPI); on Linux, gpu-screen-recorder captures the sound.
+soundcard>=0.4.3; sys_platform == "win32"
+comtypes>=1.4; sys_platform == "win32"

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "snappy"
+version = "0.1.0"
+description = "Instant replay of the last moments of your screen (Windows, Linux)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["PySide6>=6.6", "numpy>=1.26", "psutil>=5.9", "soundcard>=0.4.3; sys_platform == 'win32'",
+                "comtypes>=1.4; sys_platform == 'win32'"]
+
+[project.optional-dependencies]
+build = ["pyinstaller>=6.3"]
+
+[project.gui-scripts]
+snappy = "snappy.app:main"
+
+[tool.setuptools]
+packages = ["snappy", "snappy.models", "snappy.services", "snappy.views", "snappy.controllers",
+            "snappy.platforms", "snappy.platforms.windows", "snappy.platforms.linux", "snappy.locales"]

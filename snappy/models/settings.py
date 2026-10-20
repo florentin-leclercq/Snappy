@@ -93,6 +93,7 @@ class Settings:
 
     # --- Shortcuts ---
     hotkey_save: str = "Alt+F10"
+    hotkey_record: str = "Alt+F9"     # start / stop a manual recording (Linux)
 
     # --- Library ---
     clips_dir: str = field(default_factory=lambda: str(default_clips_dir()))

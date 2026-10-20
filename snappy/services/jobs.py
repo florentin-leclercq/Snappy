@@ -47,6 +47,23 @@ class SaveClipJob(QRunnable):
             self.signals.done.emit(None, str(exc))
 
 
+class StopRecordingJob(SaveClipJob):
+    """End of a manual recording: writes the whole recording as a clip. `done(clip, error)`."""
+
+    def run(self):
+        try:
+            ctx = self.context
+            saved = self.recorder.stop_recording(self.library.folder, name=ctx.get("name"))
+            clip = self.library.add(saved.path, saved.created, saved.duration, app=ctx.get("app", ""),
+                                    title=saved.path.stem, app_exe=ctx.get("exe", ""), game=ctx.get("game") or "",
+                                    appid=ctx.get("appid") or "", tracks=saved.tracks, screens=saved.screens,
+                                    mix_track=saved.mix_track)
+            self.signals.done.emit(clip, "")
+        except Exception as exc:
+            log.exception("Recording failed")
+            self.signals.done.emit(None, str(exc))
+
+
 class ThumbJob(QRunnable):
     """Gallery thumbnails; with `sprite`, the hover bar then the preview video.
     `done(clip, path)` for each file produced."""

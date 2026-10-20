@@ -3,8 +3,11 @@ gpu-screen-recorder options, shortcuts, .desktop files, assembly of a replay.
 Run: python -m unittest discover tests"""
 
 import os
+import json
 import shutil
+import socket
 import sys
+import threading
 import tempfile
 import unittest
 import unittest.mock
@@ -124,9 +127,78 @@ class TestGsrReplay(unittest.TestCase):
         self.assertEqual(main.count("-a"), 3)
         self.assertNotIn("-a", extra)
         self.assertNotIn("-s", extra)          # 1080p: nothing to scale down
+        for cmd, k in ((main, 0), (extra, 1)):   # manual recording: command socket, aligned screens
+            self.assertEqual(cmd[cmd.index("-ipc") + 1], str(rb.ipc_path(k)))
+            self.assertEqual(cmd[cmd.index("-ro") + 1], str(rb.screen_dir(k)))
+            self.assertIn("-write-first-frame-ts", cmd)
+        self.assertNotIn("-write-first-frame-ts", self.engine(extra_monitors=[]).build_command(0))
         portal = self.engine(capture_method="portal")
         self.assertEqual(portal._targets, ["portal"])
         self.assertIn("-restore-portal-session", portal.build_command(0))
+
+    def make_file(self, path: Path, dur: float, tracks: int) -> Path:
+        args = [ff.ffmpeg(), "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc2=size=320x180:rate=30:d={dur}"]
+        for i in range(tracks):
+            args += ["-f", "lavfi", "-i", f"sine=frequency={400 + 200 * i}:duration={dur}"]
+        args += ["-map", "0:v"] + [x for i in range(tracks) for x in ("-map", f"{i + 1}:a")]
+        args += ["-c:v", "libx264", "-preset", "ultrafast", "-g", "30", "-pix_fmt", "yuv420p", "-c:a", "aac", str(path)]
+        ff.run(args)
+        return path
+
+    def test_manual_recording(self):
+        """start / stop through fake gpu-screen-recorder command sockets: the whole recording is
+        kept (longer than the replay length) and screen 2, started 1.5 s later, is placed there."""
+        rb = self.engine(clip_seconds=5, capture_microphone=False)
+        rb._prepare_dir()
+        sources = [self.make_file(self.tmp / "rec0.mp4", 8.0, 2), self.make_file(self.tmp / "rec1.mp4", 6.0, 0)]
+        first_frame = [10_000_000, 11_500_000]     # µs: screen 2 starts 1.5 s after screen 1
+        requests = []
+
+        def serve(k: int, server: socket.socket) -> None:
+            while True:
+                try:
+                    conn, _ = server.accept()
+                except OSError:
+                    return
+                with conn:
+                    name = json.loads(conn.recv(4096).decode())["name"]
+                    requests.append((k, name))
+                    if name == "stop-replay-recording":
+                        out = rb.screen_dir(k) / f"Video_{k}.mp4"
+                        shutil.copy(sources[k], out)
+                        Path(f"{out}.ts").write_text(f"0 0 {first_frame[k]}\n")
+                        with open(rb.buffer_dir / "saved.list", "a") as f:
+                            f.write(f"{out}\n")
+                    conn.sendall(json.dumps({"id": 1, "result": "ok"}).encode() + b"\n")
+
+        servers = []
+        for k in range(2):
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            server.bind(str(rb.ipc_path(k)))
+            server.listen()
+            servers.append(server)
+            threading.Thread(target=serve, args=(k, server), daemon=True).start()
+        alive = unittest.mock.Mock(poll=lambda: None)
+        rb._procs, rb._running, rb._announced = [alive, alive], True, True
+        try:
+            rb.start_recording()
+            self.assertTrue(rb.is_recording)
+            saved = rb.stop_recording(self.tmp / "clips", name="manual")
+        finally:
+            for server in servers:
+                server.close()
+        self.assertFalse(rb.is_recording)
+        self.assertEqual([n for _k, n in requests].count("start-replay-recording"), 2)
+        self.assertEqual(requests[-1], (0, "stop-replay-recording"))   # main screen stopped last
+        info = ff.media_info(saved.path)
+        self.assertEqual((info["video_streams"], info["audio_streams"]), (2, 3))
+        self.assertAlmostEqual(saved.duration, 8.0, delta=0.15)          # not capped at clip_seconds
+        streams = ff.probe(saved.path)["streams"]
+        starts = [float(s.get("start_time", 0)) for s in streams if s["codec_type"] == "video"]
+        self.assertAlmostEqual(starts[1] - starts[0], 1.5, delta=0.1)
+        self.assertEqual(list(rb.screen_dir(0).iterdir()), [])            # screen files cleaned up
+        with self.assertRaises(Exception):
+            rb.stop_recording(self.tmp / "clips")
 
     def test_assemble(self):
         """Screen 1 (2 tracks) of 6.5 s and screen 2 of 6.2 s -> clip of 5 s at most, ends aligned."""

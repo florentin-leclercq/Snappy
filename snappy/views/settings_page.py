@@ -325,7 +325,11 @@ class SettingsPage(QWidget):
         self.hotkey_error.setWordWrap(True)
         self.hotkey_error.setTextInteractionFlags(Qt.TextSelectableByMouse)   # command to copy (Linux)
         self.hotkeys = {}
-        for key, label, hint in (("hotkey_save", tr("Save a clip"), tr("The last seconds of the replay. E.g.: Alt+F10.")),):
+        hotkeys = [("hotkey_save", tr("Save a clip"), tr("The last seconds of the replay. E.g.: Alt+F10."))]
+        if options.get("manual_recording"):
+            hotkeys.append(("hotkey_record", tr("Start / stop a recording"),
+                            tr("Records everything until you press it again, on top of the replay. E.g.: Alt+F9.")))
+        for key, label, hint in hotkeys:
             edit = QKeySequenceEdit(QKeySequence(getattr(s, key).replace("Win+", "Meta+")))
             if hasattr(edit, "setMaximumSequenceLength"):  # Qt ≥ 6.5
                 edit.setMaximumSequenceLength(1)

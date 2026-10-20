@@ -8,6 +8,10 @@
   ends are aligned.
 * The files are then merged without re-encoding into the clip MP4, in the same format as on
   Windows: screens, "Mix" track, named separate tracks; length capped at the limit.
+* Manual recording (start / stop, on top of the replay): each recorder has a command socket
+  (-ipc); "start-replay-recording" makes it write everything from now on, without a second
+  encode, until "stop-replay-recording". With several screens, gpu-screen-recorder writes the
+  timestamp of each file's first frame (same clock for all): the screens are aligned exactly.
 
 Same interface as `services.recorder.ReplayBuffer`. `LinuxReplayBuffer` picks the engine:
 gpu-screen-recorder, or the FFmpeg buffer (x11grab) for the "x11" method and as a fallback when
@@ -17,9 +21,11 @@ gpu-screen-recorder cannot run (no graphics acceleration: virtual machine...).
 from __future__ import annotations
 
 import collections
+import json
 import logging
 import shutil
 import signal
+import socket
 import subprocess
 import threading
 import time
@@ -82,6 +88,7 @@ class GsrReplayBuffer:
         self._errors: list[str] = []       # gpu-screen-recorder error lines (lowercase)
         # Called (from the watchdog thread) when gpu-screen-recorder cannot run here.
         self.on_fatal: Callable[[str], None] | None = None
+        self.recording_since: float | None = None   # manual recording in progress (time.time())
 
     # ------------------------------------------------------------------ state
     def _set_state(self, state: str, message: str = "") -> None:
@@ -123,6 +130,9 @@ class GsrReplayBuffer:
     def screen_dir(self, k: int) -> Path:
         return self.buffer_dir / f"screen_{k}"
 
+    def ipc_path(self, k: int) -> Path:
+        return self.buffer_dir / f"screen_{k}.sock"
+
     def build_command(self, k: int) -> list[str]:
         s = self.settings
         cmd = list(capture.gsr_command() or ("gpu-screen-recorder",))
@@ -132,7 +142,11 @@ class GsrReplayBuffer:
                 "-keyint", f"{KEYINT:g}", "-cursor", "yes" if s.show_cursor else "no",
                 "-encoder", "cpu" if (s.encoder == "cpu" or self._force_cpu) else "gpu",
                 "-fallback-cpu-encoding", "yes", "-v", "no",
-                "-o", str(self.screen_dir(k)), "-sc", str(self.buffer_dir / "on_save.sh")]
+                "-o", str(self.screen_dir(k)), "-sc", str(self.buffer_dir / "on_save.sh"),
+                # Manual recording: command socket, files written next to the replays.
+                "-ro", str(self.screen_dir(k)), "-ipc", str(self.ipc_path(k))]
+        if len(self._targets) > 1:
+            cmd += ["-write-first-frame-ts", "yes"]   # aligns the screens of a manual recording
         if self._targets[k] == "portal":
             cmd += ["-restore-portal-session", "yes"]
         else:
@@ -206,6 +220,7 @@ class GsrReplayBuffer:
                 self._procs.append(proc)
             self.started_at = time.monotonic()
             self._announced = False
+            self.recording_since = None     # new recorders: a manual recording does not survive
 
     def _drain(self, proc: subprocess.Popen) -> None:
         assert proc.stdout
@@ -305,9 +320,14 @@ class GsrReplayBuffer:
         for p in procs:
             if p.poll() is None:
                 p.send_signal(signal.SIGUSR1)
-        dirs = [self.screen_dir(k).resolve() for k in range(len(procs))]
-        found: list[Path | None] = [None] * len(procs)
-        deadline = time.monotonic() + 15 + self.settings.clip_seconds / 20
+        return self._wait_files(before, len(procs), 15 + self.settings.clip_seconds / 20)
+
+    def _wait_files(self, before: int, count: int, timeout: float) -> list[Path | None]:
+        """Files the recorders announced (on_save.sh) after the first `before` lines of the list,
+        one per screen ([None] for a late screen)."""
+        dirs = [self.screen_dir(k).resolve() for k in range(count)]
+        found: list[Path | None] = [None] * count
+        deadline = time.monotonic() + timeout
         main_at = None
         while time.monotonic() < deadline:
             for line in self._saved()[before:]:
@@ -349,38 +369,127 @@ class GsrReplayBuffer:
             if not files or files[0] is None:
                 raise RecorderError(tr("gpu-screen-recorder did not write the replay:") + "\n" +
                                     "\n".join(list(self._stderr_tail)[-4:]))
-            dest_dir = Path(dest_dir)
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            created = datetime.now()
-            out = ReplayBuffer.unique_path(dest_dir, name or f"Snappy {created:%Y-%m-%d %H-%M-%S}")
-            inputs = [(sc, f) for sc, f in zip(self.screens, files) if f is not None]
-            try:
-                tracks = self.assemble([f for _sc, f in inputs], out, float(self.settings.clip_seconds),
-                                       [sc for sc, _f in inputs])
-            finally:
-                for f in files:
-                    if f is not None:
+            return self._make_clip(files, dest_dir, name, float(self.settings.clip_seconds))
+
+    def _make_clip(self, files: list[Path | None], dest_dir: Path, name: str | None, limit: float | None,
+                   aligned_starts: bool = False) -> SavedClip:
+        """Screen files -> clip MP4 in dest_dir; the screen files are deleted afterwards."""
+        dest_dir = Path(dest_dir)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        created = datetime.now()
+        out = ReplayBuffer.unique_path(dest_dir, name or f"Snappy {created:%Y-%m-%d %H-%M-%S}")
+        inputs = [(sc, f) for sc, f in zip(self.screens, files) if f is not None]
+        offsets = None
+        if aligned_starts and len(inputs) > 1:
+            stamps = [self._first_frame_ts(f) for _sc, f in inputs]
+            if all(s is not None for s in stamps):
+                offsets = [(s - min(stamps)) / 1e6 for s in stamps]
+        try:
+            tracks = self.assemble([f for _sc, f in inputs], out, limit, [sc for sc, _f in inputs], offsets)
+        finally:
+            for f in files:
+                if f is not None:
+                    for p in (f, f.with_name(f.name + ".ts")):
                         try:
-                            f.unlink()
+                            p.unlink()
                         except OSError:
                             pass
-            return SavedClip(out, ff.probe_duration(out), created, tracks, [sc for sc, _f in inputs], len(tracks) > 1)
+        return SavedClip(out, ff.probe_duration(out), created, tracks, [sc for sc, _f in inputs], len(tracks) > 1)
 
-    def assemble(self, files: list[Path], out: Path, limit: float, screens: list[dict]) -> list[dict]:
-        """Screen files (the first one with the sound) -> clip MP4. The ends are aligned (all saved
-        at the same moment); the start is cut at the first keyframe that fits within the limit.
+    @staticmethod
+    def _first_frame_ts(path: Path) -> int | None:
+        """Timestamp of a file's first frame (monotonic microseconds), written by gpu-screen-recorder
+        (-write-first-frame-ts) in "<file>.ts"."""
+        try:
+            return int(path.with_name(path.name + ".ts").read_text().split()[2])
+        except (OSError, ValueError, IndexError):
+            return None
+
+    # ------------------------------------------------------------ manual recording
+    def _ipc(self, k: int, request: str, timeout: float = 5.0) -> tuple[bool | None, str]:
+        """Request to a recorder's command socket: (ok, data or error); ok is None when the
+        recorder does not answer."""
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+                sock.settimeout(timeout)
+                sock.connect(str(self.ipc_path(k)))
+                sock.sendall(json.dumps({"id": 1, "name": request}).encode() + b"\n")
+                buf = b""
+                while not buf.endswith(b"\n"):
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        break
+                    buf += chunk
+        except OSError as exc:
+            return None, str(exc)
+        try:
+            reply = json.loads(buf.decode("utf-8", "replace").strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            return False, tr("Unreadable reply from gpu-screen-recorder")
+        return reply.get("result") == "ok", str(reply.get("data") or "")
+
+    @property
+    def is_recording(self) -> bool:
+        return self.recording_since is not None
+
+    def start_recording(self) -> None:
+        """Starts a manual recording on every screen (everything from now on, until stop)."""
+        with self._save_lock:
+            if not self._running or not self._alive() or not self._announced:
+                raise RecorderError(tr("The buffer is not running."))
+            if self.recording_since is not None:
+                return
+            ok, data = self._ipc(0, "start-replay-recording")
+            if not ok:
+                raise RecorderError(tr("Could not start the recording: {error}", error=data))
+            for k in range(1, len(self._procs)):
+                ok_k, data_k = self._ipc(k, "start-replay-recording")
+                if not ok_k:
+                    log.warning("Screen %d: recording not started (%s)", k + 1, data_k)
+            self.recording_since = time.time()
+
+    def stop_recording(self, dest_dir: Path, name: str | None = None) -> SavedClip:
+        """Stops the manual recording and writes it as a clip (the whole recording). Blocking."""
+        with self._save_lock:
+            if self.recording_since is None:
+                raise RecorderError(tr("No recording in progress."))
+            self.recording_since = None
+            before = len(self._saved())
+            # The reply comes once the file is written: long recordings take a while. The other
+            # screens first, so their files are complete when the main one is.
+            for k in range(1, len(self._procs)):
+                self._ipc(k, "stop-replay-recording", timeout=120)
+            ok, data = self._ipc(0, "stop-replay-recording", timeout=120)
+            if not ok:
+                raise RecorderError(tr("Could not stop the recording: {error}", error=data))
+            files = self._wait_files(before, len(self._procs), 30)
+            if files[0] is None:
+                raise RecorderError(tr("gpu-screen-recorder did not write the recording."))
+            return self._make_clip(files, dest_dir, name, None, aligned_starts=True)
+
+    def assemble(self, files: list[Path], out: Path, limit: float | None, screens: list[dict],
+                 offsets: list[float] | None = None) -> list[dict]:
+        """Screen files (the first one with the sound) -> clip MP4. Replay: the ends are aligned
+        (all saved at the same moment) and the start is cut at the first keyframe that fits
+        within the limit. Manual recording (limit None): the starts are placed at `offsets`
+        (seconds, from the first frame timestamps), nothing is cut.
         Returns the separate tracks of the clip (with several, a "Mix" comes before them)."""
         durations = [self._video_duration(f) for f in files]
-        total = max(durations)
+        if offsets is None:
+            total = max(durations)
+            offsets = [total - d for d in durations]
+        total = max(o + d for o, d in zip(offsets, durations))
         info = ff.media_info(files[0])
         tracks = self.tracks[:info["audio_streams"]]
         if len(tracks) != len(self.tracks):
             log.warning("Replay with %d audio tracks instead of %d", info["audio_streams"], len(self.tracks))
         cmd = [ff.ffmpeg(), "-hide_banner", "-loglevel", "error", "-y"]
-        for f, d in zip(files, durations):
-            if total - d > 0.02:
-                cmd += ["-itsoffset", f"{total - d:.3f}"]
+        for f, o in zip(files, offsets):
+            if o > 0.02:
+                cmd += ["-itsoffset", f"{o:.3f}"]
             cmd += ["-i", str(f)]
+        if limit is None:
+            limit = total
         start = total - limit
         if start > 0.01:
             # Output option: copied streams resume at the first keyframe after this point (never longer).

@@ -3,7 +3,7 @@
 Capture: gpu-screen-recorder (screen and PipeWire sound, replay kept in memory).
 Desktop: XDG folders, freedesktop trash, ~/.config/autostart, KDE / GNOME / X11 shortcuts."""
 
-from .capture import (CAN_CAPTURE, DEFAULT_METHOD, DIRECT_AUDIO, ENCODER_CHOICES, ENCODER_VENDORS, audio_apps,
+from .capture import (CAN_CAPTURE, DEFAULT_METHOD, MANUAL_RECORDING, DIRECT_AUDIO, ENCODER_CHOICES, ENCODER_VENDORS, audio_apps,
                       audio_input_args, audio_pipe_name,
                       capture_plan, fallback_capture_method, list_microphones, make_capture_source, open_audio_pipe,
                       prepare_audio_process, render_node, replay_buffer_class, screen_capture_methods,
@@ -37,5 +37,5 @@ __all__ = [
     "video_prefilter", "audio_pipe_name", "open_audio_pipe", "make_capture_source", "capture_plan",
     "list_microphones", "audio_apps", "prepare_audio_process", "TEXT", "CHAT_APPS", "OVERLAY_TOAST",
     "system_sounds", "ENCODER_VENDORS", "ENCODER_CHOICES", "render_node", "replay_buffer_class",
-    "DIRECT_AUDIO", "audio_input_args", "show_overlay_toast",
+    "DIRECT_AUDIO", "audio_input_args", "show_overlay_toast", "MANUAL_RECORDING",
 ]

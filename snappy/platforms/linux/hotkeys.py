@@ -102,7 +102,7 @@ def _is_x11() -> bool:
     return bool(os.environ.get("DISPLAY")) and not os.environ.get("WAYLAND_DISPLAY")
 
 
-LABELS = {"save": tr("Save a clip")}
+LABELS = {"save": tr("Save a clip"), "record": tr("Start / stop a recording")}
 
 
 # --------------------------------------------------------------------------

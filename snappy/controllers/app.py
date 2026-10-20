@@ -19,7 +19,7 @@ from ..models.settings import Settings
 from ..platforms import system
 from ..services import ffmpeg as ff
 from ..services import media, sounds
-from ..services.jobs import SaveClipJob
+from ..services.jobs import SaveClipJob, StopRecordingJob
 from ..services.recorder import RecorderError, ReplayBuffer
 from ..views import theme
 from ..views.main_window import MainWindow
@@ -48,6 +48,8 @@ class AppController(QObject):
         self._tray_hint_shown = False
         self._paused = False
         self._last_clip = None
+        self._record_ctx: dict = {}
+        self._stopping_record = False
 
         self.bridge = _StateBridge()
         self.bridge.state.connect(self._on_state)
@@ -77,6 +79,7 @@ class AppController(QObject):
         self.toast.clicked.connect(self._open_last_clip)
         self.tray = TrayView(self)
         self.tray.saveRequested.connect(self.save_clip)
+        self.tray.recordRequested.connect(self.toggle_recording)
         self.tray.openRequested.connect(self.window.bring_to_front)
         self.tray.pauseToggled.connect(self.toggle_pause)
         self.tray.openFolderRequested.connect(lambda: system.open_folder(self.library.folder))
@@ -136,7 +139,8 @@ class AppController(QObject):
 
     def _register_hotkeys(self) -> None:
         errors = []
-        for name, key in (("save", "hotkey_save"),):
+        names = [("save", "hotkey_save")] + ([("record", "hotkey_record")] if self.can_record else [])
+        for name, key in names:
             try:
                 self.hotkeys.register(name, getattr(self.settings, key))
             except ValueError as exc:
@@ -145,10 +149,22 @@ class AppController(QObject):
             self.window.settings_page.show_hotkey_error("\n".join(errors))
             self.tray.notify(tr("Shortcut unavailable: {errors}", errors="; ".join(errors)), "warning", 5000)
         self.tray.set_hotkey(self.settings.hotkey_save)
+        self.tray.set_record(self.can_record, False, self.settings.hotkey_record)
+
+    @property
+    def can_record(self) -> bool:
+        """Manual recording (start / stop) offered by the replay engine (gpu-screen-recorder)."""
+        return callable(getattr(self.recorder, "start_recording", None))
+
+    @property
+    def is_recording(self) -> bool:
+        return bool(getattr(self.recorder, "is_recording", False))
 
     def _on_hotkey(self, name: str) -> None:
         if name == "save":
             self.save_clip()
+        elif name == "record":
+            self.toggle_recording()
 
     def handle_message(self, data: bytes) -> None:
         """Message from another instance: "hotkey:save" (desktop shortcut on Linux), otherwise
@@ -175,15 +191,49 @@ class AppController(QObject):
 
     def _update_fill(self) -> None:
         seconds = self.recorder.buffered_seconds() if self.recorder.is_running else 0.0
-        self.window.set_buffer_fill(seconds)
+        since = getattr(self.recorder, "recording_since", None)
+        self.window.set_buffer_fill(seconds, time.time() - since if since else None)
+        if self.can_record:
+            self.tray.set_record(True, since is not None, self.settings.hotkey_record)
 
     def toggle_pause(self) -> None:
+        self._warn_recording_lost()
         self._paused = not self._paused
         self.tray.set_paused(self._paused)
         if self._paused:
             self.recorder.stop()
         else:
             self.recorder.start()
+
+    # ------------------------------------------------------------ manual recording
+    def toggle_recording(self) -> None:
+        if not self.can_record or self._stopping_record:
+            return
+        if self.is_recording:
+            self._stopping_record = True
+            job = StopRecordingJob(self.recorder, self.library, self._record_ctx)
+            job.signals.done.connect(self._on_recording_saved)
+            self.pool.start(job)
+            return
+        try:
+            self.recorder.start_recording()
+        except RecorderError as exc:
+            self._show_toast(tr("Recording not started"), str(exc)[:120], ok=False)
+            return
+        self._record_ctx = self._capture_context()   # names the clip after the game being recorded
+        if self.settings.play_sound_on_save:
+            sounds.play(self.settings.sound, self.settings.sound_volume)
+        self._show_toast(tr("Recording started"), tr("{key} to stop it", key=self.settings.hotkey_record), ok=False)
+        self._update_fill()
+
+    def _on_recording_saved(self, clip, error: str) -> None:
+        self._stopping_record = False
+        self._on_saved(clip, error)
+
+    def _warn_recording_lost(self) -> None:
+        """Restarting the buffer ends the recorders: a manual recording in progress is lost."""
+        if self.is_recording:
+            self.tray.notify(tr("The manual recording was interrupted (buffer restarted)."), "warning", 5000)
 
     # ------------------------------------------------------------ saving
     def _capture_context(self) -> dict:
@@ -265,7 +315,7 @@ class AppController(QObject):
         if new.clips_dir != old.clips_dir:
             self.library.move_to(new.clips_dir)
             self.window.thumbs.clear()
-        if new.hotkey_save != old.hotkey_save:
+        if (new.hotkey_save, new.hotkey_record) != (old.hotkey_save, old.hotkey_record):
             self._register_hotkeys()
         if (new.start_with_windows, new.start_minimized) != (old.start_with_windows, old.start_minimized):
             try:
@@ -277,6 +327,7 @@ class AppController(QObject):
         self.window.apply_settings(new)
         restart = new.capture_changed(old)
         if restart:
+            self._warn_recording_lost()
             self.recorder.monitors = self._monitors()
             if not self._paused:
                 self.recorder.restart(new)

@@ -576,4 +576,21 @@ STRINGS: dict[str, str] = {
     "depends on the content": "selon le contenu",
     "Invalid shortcut ({key}): {problem}": "Raccourci invalide ({key}) : {problem}",
     "Two actions have the same shortcut.": "Deux actions ont le même raccourci.",
+    # Manual recording (Linux)
+    "Unreadable reply from gpu-screen-recorder": "Réponse illisible de gpu-screen-recorder",
+    "Could not start the recording: {error}": "Impossible de démarrer l'enregistrement : {error}",
+    "No recording in progress.": "Aucun enregistrement en cours.",
+    "Could not stop the recording: {error}": "Impossible d'arrêter l'enregistrement : {error}",
+    "gpu-screen-recorder did not write the recording.": "gpu-screen-recorder n'a pas écrit l'enregistrement.",
+    "Recording not started": "Enregistrement non démarré",
+    "Recording started": "Enregistrement lancé",
+    "{key} to stop it": "{key} pour l'arrêter",
+    "The manual recording was interrupted (buffer restarted).": "L'enregistrement manuel a été interrompu (buffer redémarré).",
+    "Start a recording": "Démarrer un enregistrement",
+    "Stop the recording ({key})": "Arrêter l'enregistrement ({key})",
+    "Start a recording ({key})": "Démarrer un enregistrement ({key})",
+    "● Recording {time} — {key} to stop": "● Enregistrement {time} — {key} pour arrêter",
+    "Start / stop a recording": "Démarrer / arrêter un enregistrement",
+    "Records everything until you press it again, on top of the replay. E.g.: Alt+F9.":
+        "Filme tout jusqu'au prochain appui, en plus du replay. Ex. : Alt+F9.",
 }

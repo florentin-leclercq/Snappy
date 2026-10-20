@@ -13,6 +13,7 @@ from .widgets import app_icon
 
 class TrayView(QObject):
     saveRequested = Signal()
+    recordRequested = Signal()
     openRequested = Signal()
     pauseToggled = Signal()
     openFolderRequested = Signal()
@@ -32,6 +33,8 @@ class TrayView(QObject):
             return act
 
         self.act_save = action(tr("Save a clip"), self.saveRequested)
+        self.act_record = action(tr("Start a recording"), self.recordRequested)
+        self.act_record.setVisible(False)   # only with an engine that can record (Linux)
         action(tr("Open Snappy"), self.openRequested)
         self.act_pause = action(tr("Pause the buffer"), self.pauseToggled)
         action(tr("Open the clips folder"), self.openFolderRequested)
@@ -49,6 +52,12 @@ class TrayView(QObject):
 
     def set_hotkey(self, hotkey: str) -> None:
         self.act_save.setText(tr("Save a clip ({key})", key=hotkey))
+
+    def set_record(self, available: bool, recording: bool, hotkey: str) -> None:
+        self.act_record.setVisible(available)
+        text = tr("Stop the recording ({key})", key=hotkey) if recording else tr("Start a recording ({key})", key=hotkey)
+        if self.act_record.text() != text:
+            self.act_record.setText(text)
 
     def set_paused(self, paused: bool) -> None:
         self.act_pause.setText(tr("Resume the buffer") if paused else tr("Pause the buffer"))

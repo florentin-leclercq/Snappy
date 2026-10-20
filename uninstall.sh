@@ -7,18 +7,21 @@ DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}"
 
 rm -f "$DATA/applications/snappy.desktop" "$DATA/applications/snappy-save.desktop" \
+      "$DATA/applications/snappy-record.desktop" \
       "$DATA/icons/hicolor/256x256/apps/snappy.png" "$HOME/.local/bin/snappy" "$CONFIG/autostart/snappy.desktop"
 
 # GNOME shortcut (KDE forgets it along with its .desktop file)
 if command -v gsettings >/dev/null; then
     schema=org.gnome.settings-daemon.plugins.media-keys
-    path=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/snappy-save/
-    current="$(gsettings get $schema custom-keybindings 2>/dev/null || true)"
-    if [[ "$current" == *"$path"* ]]; then
-        updated="$(python3 -c "import ast,sys; l=ast.literal_eval(sys.argv[1]); print([p for p in l if p!=sys.argv[2]])" "$current" "$path")"
-        gsettings set $schema custom-keybindings "$updated"
-        gsettings reset-recursively "$schema.custom-keybinding:$path" 2>/dev/null || true
-    fi
+    for name in save record; do
+        path=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/snappy-$name/
+        current="$(gsettings get $schema custom-keybindings 2>/dev/null || true)"
+        if [[ "$current" == *"$path"* ]]; then
+            updated="$(python3 -c "import ast,sys; l=ast.literal_eval(sys.argv[1]); print([p for p in l if p!=sys.argv[2]])" "$current" "$path")"
+            gsettings set $schema custom-keybindings "$updated"
+            gsettings reset-recursively "$schema.custom-keybinding:$path" 2>/dev/null || true
+        fi
+    done
 fi
 
 if [[ "${1:-}" == "--purge" ]]; then

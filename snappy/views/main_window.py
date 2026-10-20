@@ -752,13 +752,21 @@ class MainWindow(QMainWindow):
         self.status_dot.setToolTip(message)
         self.save_btn.setEnabled(state == "recording")
 
-    def set_buffer_fill(self, seconds: float) -> None:
+    def set_buffer_fill(self, seconds: float, recording: float | None = None) -> None:
+        """recording: elapsed seconds of the manual recording in progress, None without one."""
         total = self.settings.clip_seconds
         self.buffer_bar.setMaximum(total)
         self.buffer_bar.setValue(int(seconds))
         self.buffer_lbl.setText(tr("Buffer: {seconds} / {total} s", seconds=int(seconds), total=total))
         s = self.settings
-        self.hotkey_lbl.setText(tr("Save a clip: {key}", key=s.hotkey_save))
+        if recording is not None:
+            t = int(recording)
+            elapsed = f"{t // 3600}:{t // 60 % 60:02d}:{t % 60:02d}" if t >= 3600 else f"{t // 60}:{t % 60:02d}"
+            self.hotkey_lbl.setText(tr("● Recording {time} — {key} to stop", time=elapsed, key=s.hotkey_record))
+            self.hotkey_lbl.setStyleSheet(f"color: {theme.DANGER}; font-weight: 600;")
+        else:
+            self.hotkey_lbl.setText(tr("Save a clip: {key}", key=s.hotkey_save))
+            self.hotkey_lbl.setStyleSheet("")
 
     def set_sources(self, screens: list, tracks: list) -> None:
         parts = []

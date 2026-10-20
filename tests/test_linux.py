@@ -223,5 +223,46 @@ class TestGsrReplay(unittest.TestCase):
         self.assertGreater(ff.probe_duration(out), 4.0)
 
 
+class TestEditorAudio(unittest.TestCase):
+    """Long clips: the editor's tracks are memory-mapped instead of held in RAM, with the same data."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_spooled_decode_matches(self):
+        import numpy as np
+        from snappy.services import media
+
+        clip = self.tmp / "clip.mp4"
+        ff.run([ff.ffmpeg(), "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
+                "-f", "lavfi", "-i", "sine=frequency=880:duration=3", "-map", "0:a", "-map", "1:a",
+                "-ac", "1", "-c:a", "aac", str(clip)])
+        in_ram = media.decode_tracks(str(clip), [0, 1])
+        with unittest.mock.patch.object(media, "SPOOL_BYTES", 0), \
+                unittest.mock.patch.object(media, "spool_dir", lambda: self.tmp / "spool"):
+            spooled = media.decode_tracks(str(clip), [0, 1])
+        self.assertIsInstance(spooled[0].base, np.memmap)
+        for a, b in zip(in_ram, spooled):
+            self.assertEqual(a.shape, b.shape)
+            self.assertTrue(np.array_equal(a, b))
+        self.assertEqual(list((self.tmp / "spool").glob("*.pcm")), [])   # file gone, mapping kept
+        self.assertTrue(np.array_equal(media.peaks(spooled[1], 50), media.peaks(in_ram[1], 50)))
+
+    def test_peaks_blocks(self):
+        import numpy as np
+        from snappy.services import media
+
+        track = np.random.default_rng(0).integers(-32768, 32767, size=(10_001, 2), dtype=np.int16)
+        mono = np.abs(track.astype(np.int32)).max(axis=1)
+        for buckets in (1, 7, 300, 20_000):
+            edges = np.linspace(0, len(mono), buckets + 1).astype(int)
+            expected = np.maximum.reduceat(mono, np.minimum(edges[:-1], len(mono) - 1)) / 32768.0
+            with unittest.mock.patch.object(media, "PEAK_BLOCK", 997):
+                self.assertTrue(np.allclose(media.peaks(track, buckets), expected))
+
+
 if __name__ == "__main__":
     unittest.main()

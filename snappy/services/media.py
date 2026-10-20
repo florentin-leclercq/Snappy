@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import subprocess
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -433,8 +434,18 @@ class Exporter:
 
 
 # ---------------------------------------------------------------- editor audio
+# Above this size, the decoded tracks are spooled to a file and memory-mapped instead of being
+# held in RAM (a 30 min manual recording with 4 tracks is about 1.4 GB of PCM).
+SPOOL_BYTES = 256 * 1024 * 1024
+
+
+def spool_dir() -> Path:
+    return cache_dir() / "editor-audio"
+
+
 def decode_tracks(path: str, streams: list[int], rate: int = 48000):
-    """Audio tracks -> [numpy int16 (n, 2)], decoded together (aligned to the sample)."""
+    """Audio tracks -> [numpy int16 (n, 2)], decoded together (aligned to the sample). Long clips
+    come back as views on a memory-mapped file: the system pages them in and out as needed."""
     import numpy as np
 
     if not streams:
@@ -443,23 +454,57 @@ def decode_tracks(path: str, streams: list[int], rate: int = 48000):
     # Each track in stereo first: a mono track would shift the channels of all the following ones.
     # Mono is duplicated (same level; FFmpeg's conversion would lower it by 3 dB).
     try:
-        channels = [int(st.get("channels") or 2) for st in ff.probe(path).get("streams", [])
-                    if st.get("codec_type") == "audio"]
+        info = ff.probe(path)
+        channels = [int(st.get("channels") or 2) for st in info.get("streams", []) if st.get("codec_type") == "audio"]
+        duration = float(info.get("format", {}).get("duration") or 0)
     except Exception:
-        channels = []
+        channels, duration = [], 0.0
     def to_stereo(s: int) -> str:
         return "pan=stereo|c0=c0|c1=c0" if s < len(channels) and channels[s] == 1 else "aformat=channel_layouts=stereo"
     graph = ";".join(f"[0:a:{s}]{to_stereo(s)}[s{i}]" for i, s in enumerate(streams))
     graph += ";" + "".join(f"[s{i}]" for i in range(n)) + (f"amerge=inputs={n}[m]" if n > 1 else "anull[m]")
     cmd = [ff.ffmpeg(), "-v", "error", "-nostdin", "-i", path, "-filter_complex", graph, "-map", "[m]",
            "-ac", str(2 * n), "-ar", str(rate), "-f", "s16le", "-"]
+    timeout = max(600, duration * 2)
+    if duration * rate * 4 * n > SPOOL_BYTES:
+        return _decode_spooled(cmd, n, timeout)
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
-                          creationflags=ff.BACKGROUND, timeout=600)
+                          creationflags=ff.BACKGROUND, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.decode("utf-8", "replace").strip().splitlines()[-1:] or "decoding failed")
     data = np.frombuffer(proc.stdout, dtype="<i2")
     data = data[: len(data) - len(data) % (2 * n)].reshape(-1, 2 * n)
     return [np.ascontiguousarray(data[:, 2 * i:2 * i + 2]) for i in range(n)]
+
+
+def _decode_spooled(cmd: list[str], n: int, timeout: float):
+    """decode_tracks for long clips: PCM written to a file in the cache, then memory-mapped."""
+    import numpy as np
+
+    folder = spool_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    for old in folder.glob("*.pcm"):      # left over where an open file cannot be deleted (Windows)
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    fd, tmp = tempfile.mkstemp(suffix=".pcm", dir=folder)
+    try:
+        with os.fdopen(fd, "wb") as out:
+            proc = subprocess.run(cmd, stdout=out, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                                  creationflags=ff.BACKGROUND, timeout=timeout)
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.decode("utf-8", "replace").strip().splitlines()[-1:] or "decoding failed")
+        frames = os.path.getsize(tmp) // (4 * n)
+        if not frames:
+            return [np.zeros((0, 2), dtype="<i2") for _ in range(n)]
+        data = np.memmap(tmp, dtype="<i2", mode="r", shape=(frames, 2 * n))
+    finally:
+        try:
+            os.unlink(tmp)                # Linux: the mapping stays valid, the space is freed with it
+        except OSError:
+            pass
+    return [data[:, 2 * i:2 * i + 2] for i in range(n)]
 
 
 def peaks(track, buckets: int):
@@ -468,10 +513,22 @@ def peaks(track, buckets: int):
 
     if track is None or not len(track) or buckets <= 0:
         return np.zeros(max(buckets, 0), dtype=np.float32)
-    mono = np.abs(track.astype(np.int32)).max(axis=1)
-    edges = np.linspace(0, len(mono), buckets + 1).astype(int)
-    out = np.maximum.reduceat(mono, np.minimum(edges[:-1], len(mono) - 1)) / 32768.0
-    return out.astype(np.float32)
+    # In blocks of whole buckets: converting a long track to int32 at once would take gigabytes.
+    total = len(track)
+    edges = np.linspace(0, total, buckets + 1).astype(int)
+    out = np.zeros(buckets, dtype=np.float32)
+    per_block = max(1, buckets * PEAK_BLOCK // total)
+    for b0 in range(0, buckets, per_block):
+        b1 = min(buckets, b0 + per_block)
+        start = min(int(edges[b0]), total - 1)
+        # An empty last bucket reads the sample at its edge (like reduceat on the whole track).
+        end = min(total, max(int(edges[b1]), int(edges[b1 - 1]) + 1))
+        mono = np.abs(np.asarray(track[start:end]).astype(np.int32)).max(axis=1)
+        out[b0:b1] = np.maximum.reduceat(mono, np.minimum(edges[b0:b1] - start, len(mono) - 1)) / 32768.0
+    return out
+
+
+PEAK_BLOCK = 1 << 20     # samples per block in peaks()
 
 
 # ---------------------------------------------------------------- sharing

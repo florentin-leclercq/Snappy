@@ -145,6 +145,7 @@ class TestGsrReplay(unittest.TestCase):
         ff.run(args)
         return path
 
+    @unittest.skipUnless(hasattr(socket, "AF_UNIX"), "Unix sockets (gpu-screen-recorder's -ipc): not on Windows")
     def test_manual_recording(self):
         """start / stop through fake gpu-screen-recorder command sockets: the whole recording is
         kept (longer than the replay length) and screen 2, started 1.5 s later, is placed there."""
@@ -248,7 +249,8 @@ class TestEditorAudio(unittest.TestCase):
         for a, b in zip(in_ram, spooled):
             self.assertEqual(a.shape, b.shape)
             self.assertTrue(np.array_equal(a, b))
-        self.assertEqual(list((self.tmp / "spool").glob("*.pcm")), [])   # file gone, mapping kept
+        if os.name != "nt":   # Windows keeps a mapped file: it is deleted at the next load
+            self.assertEqual(list((self.tmp / "spool").glob("*.pcm")), [])   # file gone, mapping kept
         self.assertTrue(np.array_equal(media.peaks(spooled[1], 50), media.peaks(in_ram[1], 50)))
 
     def test_peaks_blocks(self):

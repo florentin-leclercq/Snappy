@@ -31,6 +31,8 @@ What `system` provides:
   render_node()                         VA-API render node
   TEXT, CHAT_APPS, OVERLAY_TOAST,       interface texts, suggested chat apps,
   system_sounds()                       notification placed by Snappy; system sounds
+  show_overlay_toast(...)               toast over the game where OVERLAY_TOAST is False (Wayland)
+  MANUAL_RECORDING                      manual recording (start / stop) next to the replay
 """
 
 import sys

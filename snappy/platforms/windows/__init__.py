@@ -6,7 +6,8 @@ from .capture import (CAN_CAPTURE, DEFAULT_METHOD, ENCODER_CHOICES, ENCODER_VEND
                       render_node, replay_buffer_class, screen_capture_methods, video_input_args, video_prefilter)
 from .process import (BACKGROUND, EXE_SUFFIX, NO_WINDOW, boost_priority, kill_with_parent,
                       kill_with_parent_pid)
-from .system import (CHAT_APPS, NAME, OVERLAY_TOAST, TEXT, accent_color, buffer_dir, cache_dir, data_dir,
+from .system import (CHAT_APPS, MANUAL_RECORDING, NAME, OVERLAY_TOAST, TEXT, accent_color, buffer_dir, cache_dir,
+                     data_dir,
                      enable_dpi_awareness, foreground_app_info, open_folder, play_wav, reveal, send_to_recycle_bin,
                      set_app_id, set_autostart, steam_dirs, steam_value, system_sounds, videos_dir)
 
@@ -45,6 +46,11 @@ def capture_plan(source: str):
     return f(source)
 
 
+def show_overlay_toast(title: str, subtitle: str, ok: bool = True, ms: int = 3500,
+                       monitor: str = "", thumb: str = "") -> bool:
+    return False   # OVERLAY_TOAST: Snappy places its own toast over the game
+
+
 def list_microphones() -> list[str]:
     from .audio import list_microphones as f
     return f()
@@ -67,6 +73,6 @@ __all__ = [
     "NO_WINDOW", "BACKGROUND", "EXE_SUFFIX", "kill_with_parent", "kill_with_parent_pid", "boost_priority",
     "GlobalHotkeys", "parse_hotkey", "screen_capture_methods", "fallback_capture_method", "video_input_args",
     "video_prefilter", "audio_pipe_name", "open_audio_pipe", "make_capture_source", "capture_plan",
-    "list_microphones", "audio_apps", "prepare_audio_process", "TEXT", "CHAT_APPS", "OVERLAY_TOAST",
+    "list_microphones", "audio_apps", "prepare_audio_process", "TEXT", "CHAT_APPS", "OVERLAY_TOAST", "MANUAL_RECORDING", "show_overlay_toast",
     "system_sounds", "ENCODER_VENDORS", "ENCODER_CHOICES", "render_node", "replay_buffer_class",
 ]

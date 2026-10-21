@@ -31,6 +31,7 @@ CHAT_APPS = ["Discord.exe", "DiscordPTB.exe", "DiscordCanary.exe", "Vesktop.exe"
              "ts3client_win64.exe", "Mumble.exe", "Slack.exe", "Zoom.exe", "Teams.exe", "ms-teams.exe"]
 # Snappy's notifications place themselves on the game screen, without taking the focus.
 OVERLAY_TOAST = True
+MANUAL_RECORDING = False   # the FFmpeg engine has no manual recording
 
 
 # --------------------------------------------------------------------------

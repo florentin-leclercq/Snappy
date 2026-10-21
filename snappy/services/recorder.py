@@ -129,6 +129,7 @@ class ReplayBuffer:
         self._generation = 0
         self.encoder = "libx264"
         self.state = "stopped"
+        self.recording_since: float | None = None   # manual recording: not with this engine
         self.started_at = 0.0
         self.tracks: list[dict] = []
         self.screens: list[dict] = []
@@ -522,6 +523,19 @@ class ReplayBuffer:
             out = dest_dir / f"{stem} ({n}).mp4"
             n += 1
         return out
+
+    # Manual recording (start / stop): gpu-screen-recorder engine only (platforms/linux/replay.py).
+    can_record = False
+
+    @property
+    def is_recording(self) -> bool:
+        return False
+
+    def start_recording(self) -> None:
+        raise RecorderError(tr("Manual recording is not available with this capture engine."))
+
+    def stop_recording(self, dest_dir: Path, name: str | None = None) -> SavedClip:
+        raise RecorderError(tr("Manual recording is not available with this capture engine."))
 
     def save_clip(self, dest_dir: Path, name: str | None = None,
                   wait_for_current: bool = True) -> SavedClip:

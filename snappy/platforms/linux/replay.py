@@ -59,6 +59,7 @@ class GsrReplayBuffer:
 
     # Time without a crash after which the replay is considered active.
     STARTUP_GRACE = 2.0
+    can_record = True   # manual recording through the command sockets (see the module docstring)
 
     def __init__(self, settings: Settings,
                  monitors: dict[int, dict] | None = None,

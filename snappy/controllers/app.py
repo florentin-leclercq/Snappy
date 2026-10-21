@@ -154,11 +154,11 @@ class AppController(QObject):
     @property
     def can_record(self) -> bool:
         """Manual recording (start / stop) offered by the replay engine (gpu-screen-recorder)."""
-        return callable(getattr(self.recorder, "start_recording", None))
+        return self.recorder.can_record
 
     @property
     def is_recording(self) -> bool:
-        return bool(getattr(self.recorder, "is_recording", False))
+        return self.recorder.is_recording
 
     def _on_hotkey(self, name: str) -> None:
         if name == "save":
@@ -191,7 +191,7 @@ class AppController(QObject):
 
     def _update_fill(self) -> None:
         seconds = self.recorder.buffered_seconds() if self.recorder.is_running else 0.0
-        since = getattr(self.recorder, "recording_since", None)
+        since = self.recorder.recording_since
         self.window.set_buffer_fill(seconds, time.time() - since if since else None)
         if self.can_record:
             self.tray.set_record(True, since is not None, self.settings.hotkey_record)
@@ -295,9 +295,8 @@ class AppController(QObject):
         screens = QGuiApplication.screens()
         screen = screens[min(self.settings.monitor_index, len(screens) - 1)] if screens else None
         if not system.OVERLAY_TOAST:
-            overlay = getattr(system, "show_overlay_toast", None)
-            if overlay and overlay(title, subtitle, ok=ok, ms=ms, monitor=screen.name() if screen else "",
-                                   thumb=thumb_path):
+            if system.show_overlay_toast(title, subtitle, ok=ok, ms=ms, monitor=screen.name() if screen else "",
+                                         thumb=thumb_path):
                 return
             self.tray.notify(f"{title} — {subtitle}" if subtitle else title, "info" if ok else "warning", ms)
             return

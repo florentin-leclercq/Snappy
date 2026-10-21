@@ -196,18 +196,21 @@ snappy/
     windows/          Windows: folders, start at login, Recycle Bin, global shortcut (RegisterHotKey),
                       screen capture (ddagrab / gdigrab), WASAPI process loopback, named pipe,
                       "job" object, accent color, Steam
-    linux/            Linux: gpu-screen-recorder replay (replay.py), PipeWire sources (capture.py),
-                      KDE / GNOME / X11 shortcuts (hotkeys.py), XDG folders, autostart, trash
+    linux/            Linux: gpu-screen-recorder replay and manual recording (replay.py), PipeWire sources
+                      (capture.py), KDE / GNOME / X11 shortcuts (hotkeys.py), XDG folders, autostart, trash,
+                      Wayland toast over the game (overlay_toast.py, run by the system Python)
     generic.py        neutral fallback for other systems (starting point of a port)
   locales/            interface translations (fr.py: English text -> French text)
 tests/                tests (python -m unittest discover tests)
+scripts/update.sh     Linux: update from GitHub at launch (called by run.sh)
 ```
 
 Porting Snappy to another system means writing a `platforms/<system>/` module that offers the same functions as
 `generic.py` (the list is at the top of `platforms/__init__.py`), then selecting it in that file: the rest of the
 code never imports `platforms.windows` or `platforms.linux`. The replay engine itself is provided by the platform
 (`replay_buffer_class()`): FFmpeg on Windows, gpu-screen-recorder on Linux, with the same interface and the same clip
-format.
+format. Manual recording is part of that interface (`can_record`, `start_recording()`, `stop_recording()`): only the
+gpu-screen-recorder engine offers it, the FFmpeg one says it cannot (`can_record = False`).
 
 To translate the interface into another language, add a `snappy/locales/<code>.py` module with a `STRINGS`
 dictionary (see `fr.py`) and add the code to `LANGUAGES` in `snappy/i18n.py`. Interface strings are written in
@@ -217,7 +220,8 @@ English in the code and wrapped in `tr()`.
 
 - Settings and log: `%APPDATA%\Snappy\` (Linux: `~/.config/Snappy/`): `settings.json`, `snappy.log`
 - Temporary buffer and caches (encoder benchmark, share MP3s): `%LOCALAPPDATA%\Snappy\`
-  (Linux: `~/.cache/Snappy/`, including the replays while they are assembled)
+  (Linux: `~/.cache/Snappy/`, including the replays while they are assembled, the GitHub update log `update.log`,
+  and the decoded audio of long clips opened in the editor, in `cache/editor-audio/`)
 - Clips: `Videos\Snappy\` by default (`.snappy-index.json` index, thumbnails in `.thumbs\`, exports in `Exports\`)
 
 ## Tests
@@ -228,8 +232,11 @@ English in the code and wrapped in `tr()`.
 
 On Linux: `.venv/bin/python -m unittest discover tests -v`. `tests/test_linux.py` checks how the settings turn into
 gpu-screen-recorder options, the desktop shortcuts and the assembly of a multi-screen replay; it also runs on
-Windows. `tests/test_i18n.py` checks that every interface string has a French translation with the same
-placeholders, and that no French text is left in the code.
+Windows (except the parts Windows cannot run: Unix sockets of the manual recording). It also checks the manual
+recording against fake gpu-screen-recorder command sockets, and the editor audio of long clips (memory-mapped, same
+samples and waveforms). `tests/test_editor_ui.py` drives the timeline with a simulated mouse (moving a removed
+passage) and the `B` key. `tests/test_i18n.py` checks that every interface string has a French translation with the
+same placeholders, and that no French text is left in the code.
 
 The integration tests run a real FFmpeg with synthetic sources: they check that a clip never exceeds the limit, that a partial buffer gives a shorter clip, that the buffer's disk usage stays bounded, that two screens and three tracks (plus the Mix) are recorded, that restarting the buffer leaves a single FFmpeg, and that the exports (multicam edit, target size, Original, MP3) are correct.
 
@@ -242,3 +249,5 @@ The integration tests run a real FFmpeg with synthetic sources: they check that 
 - Linux: on GNOME with Wayland, the foreground application is not known (clips outside a Steam game keep the
   "Snappy …" name); with several screens, each one has its own recorder and the ends of the files are aligned (a gap
   of a few milliseconds is possible); the desktop portal only records one screen.
+- Manual recording (`Alt+F9`) and the update at launch exist on Linux only (gpu-screen-recorder engine, git clone).
+  On Windows, `Snappy.exe` is not updated automatically.

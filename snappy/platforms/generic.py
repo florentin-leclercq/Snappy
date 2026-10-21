@@ -27,6 +27,7 @@ ENCODER_VENDORS: tuple[str, ...] = ()
 ENCODER_CHOICES: list[tuple[str, str]] = []
 CHAT_APPS = ["Discord", "TeamSpeak", "Mumble"]
 OVERLAY_TOAST = True
+MANUAL_RECORDING = False   # manual recording (start / stop) offered by the replay engine
 TEXT = {
     "os": tr("the system"),
     "session_start": tr("at login"),
@@ -135,6 +136,12 @@ def steam_dirs() -> list[str]:
 
 def play_wav(path: Path) -> None:
     pass
+
+
+def show_overlay_toast(title: str, subtitle: str, ok: bool = True, ms: int = 3500,
+                       monitor: str = "", thumb: str = "") -> bool:
+    """Toast over the game where OVERLAY_TOAST is False (Wayland); False: not possible here."""
+    return False
 
 
 # --------------------------------------------------------------------------

@@ -39,7 +39,7 @@ class SettingsController(QObject):
         """System lists shown by the settings page."""
         return {"capture_methods": system.screen_capture_methods(), "microphones": system.list_microphones(),
                 "sounds": sounds.available(), "segment_seconds": SEGMENT_SECONDS,
-                "manual_recording": getattr(system, "MANUAL_RECORDING", False)}
+                "manual_recording": system.MANUAL_RECORDING}
 
     def attach(self, page: SettingsPage) -> None:
         """Connects a settings page (created at startup, then at every "Cancel")."""

@@ -595,4 +595,6 @@ STRINGS: dict[str, str] = {
     "Start / stop a recording": "Démarrer / arrêter un enregistrement",
     "Records everything until you press it again, on top of the replay. E.g.: Alt+F9.":
         "Filme tout jusqu'au prochain appui, en plus du replay. Ex. : Alt+F9.",
+    "Manual recording is not available with this capture engine.":
+        "L'enregistrement manuel n'est pas disponible avec ce moteur de capture.",
 }

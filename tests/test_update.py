@@ -2,6 +2,7 @@
 stands in for its API, local git repositories for the clone. Run: python -m unittest discover tests"""
 
 import hashlib
+import importlib
 import http.server
 import io
 import json
@@ -445,6 +446,15 @@ class TestSelfUpdate(unittest.TestCase):
         self.assertIsNone(update.staged_update())                         # not retried at every start
 
 
+def qt_widgets_error() -> str:
+    """Why Qt's widgets cannot load here ("" when they can): system libraries missing (libEGL...)."""
+    try:
+        importlib.import_module("PySide6.QtWidgets")
+    except ImportError as exc:
+        return str(exc)
+    return ""
+
+
 class TestProgressWindow(unittest.TestCase):
     """run_with_progress: no window while nothing is installed; the window with the steps otherwise."""
 
@@ -452,6 +462,7 @@ class TestProgressWindow(unittest.TestCase):
         with unittest.mock.patch.dict(sys.modules, {"snappy.views.update_window": None}):
             self.assertEqual(update.run_with_progress(lambda progress: "up to date"), "up to date")
 
+    @unittest.skipIf(qt_widgets_error(), f"Qt widgets unavailable: {qt_widgets_error()}")
     def test_terminal_without_window(self):
         with unittest.mock.patch("snappy.views.update_window.can_show", return_value=False), \
                 unittest.mock.patch("sys.stderr", new_callable=io.StringIO) as err:
@@ -464,6 +475,7 @@ class TestProgressWindow(unittest.TestCase):
             self.assertEqual(update.run_with_progress(task), "updated")
         self.assertEqual(err.getvalue().splitlines(), ["Downloading", "Installing"])
 
+    @unittest.skipIf(qt_widgets_error(), f"Qt widgets unavailable: {qt_widgets_error()}")
     def test_window_shows_the_steps(self):
         from PySide6.QtWidgets import QApplication
 

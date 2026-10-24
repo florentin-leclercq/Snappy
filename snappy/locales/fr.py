@@ -584,6 +584,13 @@ STRINGS: dict[str, str] = {
     "No recording in progress.": "Aucun enregistrement en cours.",
     "The recording is empty.": "L'enregistrement est vide.",
     "Version {version}": "Version {version}",
+    "Updating Snappy": "Mise à jour de Snappy",
+    "Downloading Snappy {version}…": "Téléchargement de Snappy {version}…",
+    "Installing Snappy {version}…": "Installation de Snappy {version}…",
+    "Installing the new dependencies…": "Installation des nouvelles dépendances…",
+    "Waiting for Snappy to close…": "En attente de la fermeture de Snappy…",
+    "Starting Snappy…": "Démarrage de Snappy…",
+    "Snappy starts again by itself once it is done.": "Snappy redémarre tout seul une fois terminé.",
     "Restart to update (version {version})": "Redémarrer pour mettre à jour (version {version})",
     "Snappy was updated to version {version}.": "Snappy a été mis à jour (version {version}).",
     "Snappy {version} is ready: it is installed when Snappy restarts.":

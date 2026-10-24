@@ -140,9 +140,13 @@ only installing `Snappy.exe` belongs to the system layer (`platforms/windows/upd
 - **`Snappy.exe`** (Windows): a little after starting, then every 6 hours, Snappy downloads the release's
   `Snappy-<version>-windows.zip` in the background, checks its SHA-256, and unpacks it into
   `%LOCALAPPDATA%\Snappy\update`. It is installed when Snappy restarts: "Restart to update" in the notification
-  area menu, or the next start. A small PowerShell script waits for Snappy to quit, swaps the folders (the previous
-  version is put back if the copy fails) and starts Snappy again. A folder that cannot be written without
-  administrator rights (Program Files) is not updated.
+  area menu, or the next start. The new `Snappy.exe` then installs itself (`--install-update`): it waits for the old
+  one to quit, swaps the folders (the previous version is put back if the copy fails) and starts Snappy again. A
+  folder that cannot be written without administrator rights (Program Files) is not updated.
+- While an update is being installed, an **update window** shows what is being done (download, install, new
+  dependencies) with a progress bar (`views/update_window.py`): the new `Snappy.exe` installing itself, or the
+  launcher's update step from the sources (on Linux, when a graphical session is there; in the terminal otherwise).
+  Nothing shows up when Snappy is up to date.
 - After an update, Snappy says so once ("Snappy was updated to version …").
 
 It never blocks the launch: offline (8 s timeout), no release yet, Snappy already running, local edits not committed,
@@ -248,6 +252,7 @@ snappy/
     timeline.py       timeline: excerpt, cuts, screens, tracks and volume curves
     settings_page.py  settings
     tray.py           notification area
+    update_window.py  window with a progress bar while Snappy updates itself
     widgets.py, theme.py
   controllers/        connect views, models and services
     app.py            buffer, global shortcut, notification area, saving clips
@@ -257,7 +262,7 @@ snappy/
   platforms/          system layer: `from snappy.platforms import system`
     windows/          Windows: folders, start at login, Recycle Bin, global shortcut (RegisterHotKey),
                       screen capture (ddagrab / gdigrab), WASAPI process loopback, named pipe,
-                      "job" object, accent color, Steam, installing an update of Snappy.exe (update.py)
+                      "job" object, accent color, Steam, the new Snappy.exe installing itself (update.py)
     linux/            Linux: gpu-screen-recorder replay and manual recording (replay.py), PipeWire sources
                       (capture.py), KDE / GNOME / X11 shortcuts (hotkeys.py), XDG folders, autostart, trash,
                       Wayland toast over the game (overlay_toast.py, run by the system Python)
@@ -301,7 +306,8 @@ recording against fake gpu-screen-recorder command sockets, and the editor audio
 samples and waveforms). `tests/test_editor_ui.py` drives the timeline with a simulated mouse (moving a removed
 passage) and the `B` key. `tests/test_update.py` checks the updates against a local fake GitHub API and local git repositories (move
 to the release tag, local commits, conflicts, dependencies put back) and, on Windows, the download, checksum and
-install of `Snappy.exe` by the PowerShell script. `tests/test_i18n.py` checks that every interface string has a French translation with the
+install of `Snappy.exe` by the new executable (old version put back if the copy fails), and the update window
+(no window while up to date, the steps otherwise). `tests/test_i18n.py` checks that every interface string has a French translation with the
 same placeholders, and that no French text is left in the code.
 
 The integration tests run a real FFmpeg with synthetic sources: they check that a clip never exceeds the limit, that a partial buffer gives a shorter clip, that the buffer's disk usage stays bounded, that two screens and three tracks (plus the Mix) are recorded, that restarting the buffer leaves a single FFmpeg, that a manual recording keeps everything from start to stop (longer than the replay) while clips can still be saved, and that the exports (multicam edit, target size, Original, MP3) are correct.

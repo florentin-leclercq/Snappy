@@ -12,8 +12,13 @@ Two kinds of installation:
 * A packaged Snappy (`system.SELF_UPDATE`: Snappy.exe on Windows) downloads the release asset
   of its system (`system.UPDATE_ASSET`: `Snappy-<version>-windows.zip`) in the background,
   checks its SHA-256 when GitHub gives it, and unpacks it into the cache. The update is
-  installed when Snappy restarts ("Restart to update" or the next start), by the system layer
-  (`system.install_update`: platforms/windows/update.py).
+  installed when Snappy restarts ("Restart to update" or the next start): the system layer
+  (`system.install_update`) starts the new Snappy with --install-update, which waits for the old
+  one to quit, swaps the folders (`install_folder`, the old one is put back if the copy fails)
+  and starts Snappy again.
+
+While an update is actually installed, a window shows what is being done with a progress bar
+(views/update_window.py, through `run_with_progress`); nothing shows up when Snappy is up to date.
 
 It never stands in the way of the launch: offline, slow network (timeout), no release yet, local
 edits not committed, Snappy already running from the folder... -> the current version runs as it
@@ -24,7 +29,7 @@ is. What happened is written to update.log in Snappy's cache folder.
     SNAPPY_UPDATE_API=url     other API root (tests)
     SNAPPY_UPDATE_TIMEOUT=8   seconds allowed to reach GitHub
 
-The launcher runs this module before Snappy: it does not need Qt.
+The launcher runs this module before Snappy: Qt is only loaded when the update window shows up.
 """
 
 from __future__ import annotations
@@ -32,20 +37,27 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import queue
 import re
 import shutil
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 import urllib.error
 import urllib.request
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from . import APP_NAME, SOURCE_ROOT, __version__
+from .i18n import tr
 from .platforms import system
+
+# Progress of an update being installed: (what is being done, fraction 0-1 or None if unknown).
+Progress = Callable[[str, "float | None"], None]
 
 REPO = "florentin-leclercq/Snappy"
 API = "https://api.github.com"
@@ -191,6 +203,10 @@ def _done(result: str, detail: str = "") -> str:
     return result
 
 
+def _no_progress(text: str, fraction: float | None = None) -> None:
+    pass
+
+
 def _pip_install(root: Path) -> subprocess.CompletedProcess | None:
     """Installs requirements.txt in the venv of the sources (None without a venv)."""
     python = _venv_python(root)
@@ -200,10 +216,12 @@ def _pip_install(root: Path) -> subprocess.CompletedProcess | None:
                           cwd=root, capture_output=True, text=True, creationflags=system.NO_WINDOW)
 
 
-def update_source(root: Path = SOURCE_ROOT, release: Release | None = None) -> str:
+def update_source(root: Path = SOURCE_ROOT, release: Release | None = None,
+                  progress: Progress | None = None) -> str:
     """Moves sources to the latest release: a git clone to its tag, sources installed from a
     release archive to the new archive. Returns what happened (also logged): "updated",
-    "up to date", or why nothing changed."""
+    "up to date", or why nothing changed. `progress` only hears from an update being installed."""
+    progress = progress or _no_progress
     if disabled():
         return "disabled"
     is_clone = (root / ".git").exists() and bool(shutil.which("git"))
@@ -223,15 +241,18 @@ def update_source(root: Path = SOURCE_ROOT, release: Release | None = None) -> s
     if release is None or not release.tag:
         return _done("no release", "no release published yet: not updated")
     try:
-        return _update_clone(root, release) if is_clone else _update_archive(root, release)
+        return _update_clone(root, release, progress) if is_clone else _update_archive(root, release, progress)
     except (OSError, subprocess.SubprocessError, tarfile.TarError) as exc:
         return _done("failed", f"update failed: {exc}")
 
 
-def _update_clone(root: Path, release: Release) -> str:
+def _update_clone(root: Path, release: Release, progress: Progress = _no_progress) -> str:
     """Git clone: fast-forward to the release tag, or local commits replayed on top of it."""
+    if not is_newer(release.version, installed_version(root)):
+        return "up to date"                       # this release, or a development version after it
     tag = release.tag
     ref = f"refs/tags/{tag}"
+    progress(tr("Downloading Snappy {version}…", version=release.version), None)
     fetch = _git(root, "fetch", "--quiet", "--no-tags", "origin", f"+{ref}:{ref}", timeout=_timeout() * 4)
     if fetch.returncode:
         return _done("offline", f"could not fetch {tag}: {fetch.stderr.strip()}")
@@ -244,6 +265,7 @@ def _update_clone(root: Path, release: Release) -> str:
             return _done("failed", f"fast-forward to {tag} failed: {r.stderr.strip()}")
     else:
         # Local commits on top of an older version: replayed on top of the release.
+        progress(tr("Installing Snappy {version}…", version=release.version), None)
         r = _git(root, "rebase", "--quiet", ref)
         if r.returncode:
             _git(root, "rebase", "--abort")
@@ -251,6 +273,7 @@ def _update_clone(root: Path, release: Release) -> str:
     after = _git(root, "rev-parse", "HEAD").stdout.strip()
     # New Python dependencies: installed, otherwise back to the previous version.
     if _git(root, "diff", "--quiet", before, after, "--", "requirements.txt").returncode:
+        progress(tr("Installing the new dependencies…"), None)
         pip = _pip_install(root)
         if pip is not None and pip.returncode:
             _git(root, "reset", "--hard", "--quiet", before)
@@ -260,8 +283,12 @@ def _update_clone(root: Path, release: Release) -> str:
 
 
 def installed_version(root: Path) -> str:
-    """Version of the sources in `root` (snappy/__init__.py)."""
-    m = re.search(r'^__version__ = "([^"]+)"', (root / "snappy" / "__init__.py").read_text(encoding="utf-8"), re.M)
+    """Version of the sources in `root` (snappy/__init__.py); "" when unknown."""
+    try:
+        text = (root / "snappy" / "__init__.py").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    m = re.search(r'^__version__ = "([^"]+)"', text, re.M)
     return m.group(1) if m else ""
 
 
@@ -272,7 +299,7 @@ def _remove(path: Path) -> None:
         path.unlink()
 
 
-def _update_archive(root: Path, release: Release) -> str:
+def _update_archive(root: Path, release: Release, progress: Progress = _no_progress) -> str:
     """Sources installed from a release archive: each top-level entry of the new archive replaces
     the old one (the snappy package as a whole, so removed modules go too); what the archive does
     not hold stays (.venv, ffmpeg, files of your own). The old entries wait in a backup folder and
@@ -288,7 +315,10 @@ def _update_archive(root: Path, release: Release) -> str:
         shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
     try:
-        archive = _download(asset, work)
+        downloading = tr("Downloading Snappy {version}…", version=release.version)
+        progress(downloading, 0.0)
+        archive = _download(asset, work, lambda f: progress(downloading, f))
+        progress(tr("Installing Snappy {version}…", version=release.version), None)
         unpacked = work / "new"
         with tarfile.open(archive) as tar:
             if hasattr(tarfile, "data_filter"):
@@ -317,6 +347,7 @@ def _update_archive(root: Path, release: Release) -> str:
                 placed.append(item.name)
             old_req, new_req = backup / "requirements.txt", root / "requirements.txt"
             if not (old_req.exists() and new_req.exists() and old_req.read_bytes() == new_req.read_bytes()):
+                progress(tr("Installing the new dependencies…"), None)
                 pip = _pip_install(root)
                 if pip is not None and pip.returncode:
                     raise _DependencyError(pip.stderr[-2000:])
@@ -388,12 +419,12 @@ def _download(asset: dict, folder: Path, progress=None) -> Path:
     with _request(asset["url"], 60) as resp, open(archive, "wb") as out:
         total = asset["size"] or int(resp.headers.get("Content-Length") or 0)
         got = 0
-        while chunk := resp.read(1024 * 1024):
+        while chunk := resp.read(256 * 1024):
             out.write(chunk)
             digest.update(chunk)
             got += len(chunk)
             if progress and total:
-                progress(got / total)
+                progress(min(1.0, got / total))
     if asset["size"] and archive.stat().st_size != asset["size"]:
         raise OSError(f"incomplete download ({archive.stat().st_size} / {asset['size']} bytes)")
     if asset["sha256"] and digest.hexdigest() != asset["sha256"]:
@@ -440,16 +471,135 @@ def apply_staged(wait_pid: int, args: list[str] | None = None, target: Path | No
     if staged is None:
         return False
     version, folder = staged
-    if not system.install_update(folder, target or install_dir(), staging_dir(), cache_root() / "update.log",
-                                 version, wait_pid, args or []):
+    if not system.install_update(folder / EXE_NAME, target or install_dir(), version, wait_pid, args or []):
         return False
     log(f"installing {version} after Snappy quits")
     return True
 
 
+def _wait_for_exit(pid: int, timeout: float) -> None:
+    if not pid:
+        return
+    try:
+        import psutil
+
+        psutil.Process(pid).wait(timeout)
+    except Exception:          # gone already, or still there after the timeout: the rename tells
+        pass
+
+
+def install_folder(source: Path, target: Path, version: str, wait_pid: int = 0,
+                   progress: Progress | None = None) -> bool:
+    """A packaged Snappy installing itself (run by the new executable, from the staging folder):
+    waits for the old Snappy (`wait_pid`) to quit, puts the old folder aside (`<target>.old`),
+    copies `source` to `target` with its progress, and puts the old folder back if the copy fails.
+    The downloaded update is forgotten either way: a failed install is not retried at every start
+    (it is downloaded again later)."""
+    progress = progress or _no_progress
+    progress(tr("Waiting for Snappy to close…"), None)
+    _wait_for_exit(wait_pid, 60)
+    old = target.with_name(target.name + ".old")
+    src, dst, old_path = system.long_path(source), system.long_path(target), system.long_path(old)
+    try:
+        shutil.rmtree(old_path, ignore_errors=True)
+        for _ in range(40):
+            try:
+                os.rename(dst, old_path)
+                break
+            except OSError:
+                time.sleep(0.5)
+        else:
+            log(f"install of {version} failed: {target} is in use")
+            return False
+        files = [os.path.join(d, n) for d, _dirs, names in os.walk(src) for n in names]
+        sizes = {f: os.path.getsize(f) for f in files}
+        total, copied, shown = sum(sizes.values()) or 1, 0, -1.0
+        text = tr("Installing Snappy {version}…", version=version)
+        try:
+            for f in files:
+                dest = os.path.join(dst, os.path.relpath(f, src))
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                shutil.copy2(f, dest)
+                copied += sizes[f]
+                if copied / total - shown >= 0.005:
+                    shown = copied / total
+                    progress(text, shown)
+            progress(text, 1.0)
+        except OSError as exc:
+            log(f"install of {version} failed ({exc}): previous version put back")
+            shutil.rmtree(dst, ignore_errors=True)
+            os.rename(old_path, dst)
+            return False
+        log(f"installed {version} in {target}")
+        return True
+    finally:
+        (staging_dir() / "ready.json").unlink(missing_ok=True)
+
+
+def run_installer(target: Path, version: str, wait_pid: int, args: list[str]) -> int:
+    """`Snappy.exe --install-update`: the new Snappy, started from the staging folder, installs
+    itself in `target` with the update window, then starts the installed Snappy with `args`."""
+    source = Path(sys.executable).resolve().parent
+
+    def task(progress: Progress) -> bool:
+        ok = install_folder(source, target, version, wait_pid, progress)
+        progress(tr("Starting Snappy…"), None)
+        exe = target / EXE_NAME
+        if exe.exists():
+            subprocess.Popen([str(exe), *args], cwd=str(target), close_fds=True)
+        return ok
+
+    return 0 if run_with_progress(task) else 1
+
+
+def cleanup_after_install() -> None:
+    """In the installed Snappy, a little after it starts: the previous version's folder and the
+    staging folder the installer ran from (unless another update waits there)."""
+    shutil.rmtree(system.long_path(install_dir().with_name(install_dir().name + ".old")), ignore_errors=True)
+    if not (staging_dir() / "ready.json").exists():
+        shutil.rmtree(system.long_path(staging_dir()), ignore_errors=True)
+
+
+def run_with_progress(task: Callable[[Progress], object]) -> object:
+    """Runs `task(progress)` in a thread and returns its result. At the first progress report, the
+    update window shows up (Qt is loaded only then); without a display, or without Qt, the steps
+    are written to the terminal instead."""
+    messages: queue.Queue = queue.Queue()
+    result: dict = {}
+
+    def worker():
+        try:
+            result["value"] = task(lambda text, fraction=None: messages.put((text, fraction)))
+        except Exception as exc:          # logged; the launcher goes on with the current version
+            log(f"update failed: {exc}")
+        finally:
+            messages.put(None)
+
+    thread = threading.Thread(target=worker, name="update", daemon=True)
+    thread.start()
+    first = messages.get()
+    if first is not None:
+        shown = False
+        try:
+            from .views.update_window import show_progress
+
+            shown = show_progress(first, messages)
+        except Exception as exc:          # no Qt (system Python), no display...
+            log(f"update window unavailable: {exc}")
+        if not shown:
+            item, last = first, ""
+            while item is not None:
+                if item[0] != last:
+                    print(item[0], file=sys.stderr)
+                    last = item[0]
+                item = messages.get()
+    thread.join()
+    return result.get("value")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Launcher of an installation from the sources: `python -m snappy.update` before Snappy."""
-    result = update_source()
+    result = run_with_progress(lambda progress: update_source(progress=progress))
     if result not in ("up to date", "not a git clone", "disabled", "running"):
         print(f"Snappy update: {result}", file=sys.stderr)
     return 0

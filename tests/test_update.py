@@ -368,7 +368,7 @@ class TestSelfUpdate(unittest.TestCase):
         """Only Windows installs its own updates (Snappy.exe); elsewhere, git clones (the launcher)."""
         self.assertEqual(system.SELF_UPDATE, sys.platform == "win32")
         self.assertFalse(generic.SELF_UPDATE)
-        self.assertFalse(generic.install_update(self.tmp, self.tmp, self.tmp, self.tmp / "log", "1", 0, []))
+        self.assertFalse(generic.install_update(self.tmp / "Snappy", self.tmp, "1", 0, []))
         if sys.platform == "win32":
             self.assertRegex("Snappy-1.0.0-windows.zip", system.UPDATE_ASSET)
             self.assertTrue(system.long_path(self.tmp).startswith("\\\\?\\"))
@@ -376,34 +376,121 @@ class TestSelfUpdate(unittest.TestCase):
             update.download_release(self.release(), pattern=ZIP)
             self.assertFalse(update.apply_staged(os.getpid()))         # nothing can install it here
 
+    @unittest.skipUnless(sys.platform == "win32", "Snappy.exe")
+    def test_new_exe_started_as_installer(self):
+        """apply_staged starts the downloaded Snappy.exe with --install-update (it outlives Snappy)."""
+        folder = update.download_release(self.release(), pattern=ZIP)
+        with unittest.mock.patch("subprocess.Popen") as popen:
+            self.assertTrue(update.apply_staged(1234, ["--minimized"], target=self.tmp / "install"))
+        cmd = popen.call_args.args[0]
+        self.assertEqual(Path(cmd[0]), folder / update.EXE_NAME)
+        self.assertEqual(cmd[1:], ["--install-update", str(self.tmp / "install"), "--update-version", "99.0.0",
+                                   "--wait-pid", "1234", "--relaunch", '["--minimized"]'])
+        self.assertTrue(popen.call_args.kwargs["creationflags"] & subprocess.CREATE_NEW_PROCESS_GROUP)
+
     def test_can_replace(self):
         target = self.tmp / "install"
         target.mkdir()
         self.assertTrue(update.can_replace(target))
 
-    @unittest.skipUnless(sys.platform == "win32", "Windows install script (PowerShell)")
-    def test_install_after_quit(self):
-        target = self.tmp / "install"
+    def make_install(self) -> Path:
+        target = self.tmp / "install" / "Snappy"
         (target / "_internal").mkdir(parents=True)
-        (target / "Snappy.exe").write_bytes(self.exe_bytes())
+        (target / update.EXE_NAME).write_bytes(b"old exe")
         (target / "_internal" / "old.txt").write_text("old version")
-        update.download_release(self.release(), pattern=ZIP)
+        return target
+
+    def test_install_folder(self):
+        """The new folder replaces the old one once the old Snappy has quit, with its progress; the
+        old one waits aside (removed by the installed Snappy), the update is not installed twice."""
+        target = self.make_install()
+        source = update.download_release(self.release(), pattern=ZIP)
         snappy = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1.5)"])   # "Snappy" quitting
-        self.assertTrue(update.apply_staged(snappy.pid, target=target))
-        log = update.cache_root() / "update.log"
-        deadline = time.time() + 60
-        while time.time() < deadline and "installed 99.0.0" not in (log.read_text() if log.exists() else ""):
-            time.sleep(0.2)
-        snappy.wait()
-        self.assertIn("installed 99.0.0", log.read_text())
+        seen = []
+        start = time.time()
+        self.assertTrue(update.install_folder(source, target, "99.0.0", snappy.pid,
+                                              lambda text, f=None: seen.append((text, f))))
+        self.assertGreaterEqual(time.time() - start, 1.0)                 # waited for the old Snappy
+        self.assertIsNotNone(snappy.poll())
         self.assertTrue((target / "_internal" / "new.txt").exists())
         self.assertFalse((target / "_internal" / "old.txt").exists())
-        deadline = time.time() + 10
-        while time.time() < deadline and (Path(f"{target}.old").exists() or update.staged_update()):
-            time.sleep(0.2)
-        self.assertFalse(Path(f"{target}.old").exists())
-        self.assertIsNone(update.staged_update())                            # not installed twice
-        self.assertFalse(update.apply_staged(snappy.pid, target=target))
+        self.assertEqual((target / update.EXE_NAME).read_bytes(), self.exe_bytes())
+        fractions = [f for _t, f in seen if f is not None]
+        self.assertEqual(fractions, sorted(fractions))
+        self.assertAlmostEqual(fractions[-1], 1.0)
+        self.assertIn("installed 99.0.0", (update.cache_root() / "update.log").read_text())
+        self.assertIsNone(update.staged_update())                         # not installed twice
+        with unittest.mock.patch.object(update, "install_dir", return_value=target):
+            update.cleanup_after_install()
+        self.assertFalse(target.with_name("Snappy.old").exists())
+        self.assertFalse(update.staging_dir().exists())
+
+    def test_failed_copy_puts_the_old_version_back(self):
+        target = self.make_install()
+        source = update.download_release(self.release(), pattern=ZIP)
+        calls = []
+
+        def copy_then_fail(src, dst, *a, **k):
+            calls.append(src)
+            if len(calls) == 2:
+                raise OSError("disk full")
+            return shutil.copyfile(src, dst)
+
+        with unittest.mock.patch.object(update.shutil, "copy2", copy_then_fail):
+            self.assertFalse(update.install_folder(source, target, "99.0.0"))
+        self.assertEqual((target / "_internal" / "old.txt").read_text(), "old version")
+        self.assertEqual((target / update.EXE_NAME).read_bytes(), b"old exe")
+        self.assertFalse(target.with_name("Snappy.old").exists())
+        self.assertIn("previous version put back", (update.cache_root() / "update.log").read_text())
+        self.assertIsNone(update.staged_update())                         # not retried at every start
+
+
+class TestProgressWindow(unittest.TestCase):
+    """run_with_progress: no window while nothing is installed; the window with the steps otherwise."""
+
+    def test_no_window_when_up_to_date(self):
+        with unittest.mock.patch.dict(sys.modules, {"snappy.views.update_window": None}):
+            self.assertEqual(update.run_with_progress(lambda progress: "up to date"), "up to date")
+
+    def test_terminal_without_window(self):
+        with unittest.mock.patch("snappy.views.update_window.can_show", return_value=False), \
+                unittest.mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            def task(progress):
+                progress("Downloading", 0.5)
+                progress("Downloading", 1.0)
+                progress("Installing", None)
+                return "updated"
+
+            self.assertEqual(update.run_with_progress(task), "updated")
+        self.assertEqual(err.getvalue().splitlines(), ["Downloading", "Installing"])
+
+    def test_window_shows_the_steps(self):
+        from PySide6.QtWidgets import QApplication
+
+        from snappy.views import update_window
+
+        seen = []
+        real = update_window.UpdateWindow.set_progress
+
+        def spy(window, text, fraction):
+            seen.append((text, fraction, window.isVisible(), window.bar.maximum()))
+            real(window, text, fraction)
+
+        with unittest.mock.patch.dict(os.environ, {"QT_QPA_PLATFORM": os.environ.get("QT_QPA_PLATFORM", "offscreen")}), \
+                unittest.mock.patch.object(update_window.UpdateWindow, "set_progress", spy):
+            def task(progress):
+                for f in (0.0, 0.5, 1.0):
+                    progress("Downloading Snappy 9.9.9…", f)
+                    time.sleep(0.15)
+                progress("Installing Snappy 9.9.9…", None)
+                time.sleep(0.15)
+                return "updated"
+
+            self.assertEqual(update.run_with_progress(task), "updated")
+        self.assertIsNotNone(QApplication.instance())
+        self.assertEqual(seen[0][:2], ("Downloading Snappy 9.9.9…", 0.0))
+        self.assertIn(("Downloading Snappy 9.9.9…", 0.5, True, 1000), seen)
+        self.assertEqual(seen[-1][:2], ("Installing Snappy 9.9.9…", None))     # moving bar
 
 
 if __name__ == "__main__":

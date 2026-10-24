@@ -34,7 +34,7 @@ What `system` provides:
   show_overlay_toast(...)               toast over the game where OVERLAY_TOAST is False (Wayland)
   MANUAL_RECORDING                      manual recording (start / stop) next to the replay
   SELF_UPDATE, UPDATE_ASSET,            packaged Snappy that updates itself from a release asset
-  install_update(...), long_path(path)  (Windows: Snappy.exe); swapping the install folder
+  install_update(...), long_path(path)  (Windows: Snappy.exe); the new executable installing itself
   SOURCE_ASSET                          release archive replacing sources not installed by git (Linux)
 """
 

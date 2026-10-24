@@ -158,10 +158,9 @@ def long_path(path: Path) -> str:
     return str(path.resolve())
 
 
-def install_update(source: Path, target: Path, staging: Path, log_path: Path, version: str,
-                   wait_pid: int, args: list[str]) -> bool:
-    """Replaces the install folder `target` with `source` once process `wait_pid` has quit, then
-    starts Snappy again with `args`. False: not possible here."""
+def install_update(new_exe: Path, target: Path, version: str, wait_pid: int, args: list[str]) -> bool:
+    """Has the downloaded Snappy (`new_exe`) install itself in `target` once process `wait_pid` has
+    quit, then start Snappy again with `args`. False: not possible here."""
     return False
 
 

@@ -119,6 +119,7 @@ class AppController(QObject):
 
         # Snappy.exe: looks for a new release a little after starting, then every few hours.
         self._update_version = ""
+        self._update_cleaned = False
         if update.self_updating():
             QTimer.singleShot(20_000, self._check_for_update)
             self.update_timer = QTimer(self, interval=6 * 3600 * 1000, timeout=self._check_for_update)
@@ -341,6 +342,9 @@ class AppController(QObject):
 
         def run():
             try:
+                if not self._update_cleaned:     # leftovers of the last install, before any download
+                    self._update_cleaned = True
+                    update.cleanup_after_install()
                 release = update.latest_release()
                 if release is None or not update.is_newer(release.tag):
                     return

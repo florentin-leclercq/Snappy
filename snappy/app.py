@@ -4,10 +4,12 @@ application over to the main controller (`controllers.app`)."""
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import sys
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
@@ -58,6 +60,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--hotkey", metavar="ACTION",
                         help="triggers a shortcut in the running Snappy (save: save a clip); "
                              "this is the command the desktop shortcuts run on Linux")
+    # Snappy.exe installing its own update (started by the previous version: update.install_update).
+    parser.add_argument("--install-update", metavar="FOLDER", help=argparse.SUPPRESS)
+    parser.add_argument("--update-version", default="", help=argparse.SUPPRESS)
+    parser.add_argument("--wait-pid", type=int, default=0, help=argparse.SUPPRESS)
+    parser.add_argument("--relaunch", default="[]", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
 
     if args.hotkey:
@@ -72,6 +79,15 @@ def main(argv: list[str] | None = None) -> int:
     system.set_app_id()
     _setup_logging()
     log.info("Snappy %s", __version__)
+
+    if args.install_update:
+        # Before the single-instance check: the old Snappy may still be quitting.
+        try:
+            relaunch = [str(a) for a in json.loads(args.relaunch)]
+        except ValueError:
+            relaunch = []
+        return update.run_installer(Path(args.install_update), args.update_version or __version__,
+                                    args.wait_pid, relaunch)
 
     from .controllers.app import AppController
     from .views import theme

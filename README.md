@@ -79,11 +79,8 @@ snappy              # or ./run.sh from this folder
 ./uninstall.sh      # removes the menu entry, the login item and the shortcut (clips and settings are kept)
 ```
 
-**Updates**: installed from a git clone, Snappy updates itself from GitHub when it starts (`scripts/update.sh`,
-called by `run.sh`; about 0.4 s). It never blocks the launch: offline, Snappy already running, local edits not
-committed, a conflict or a failed dependency install, and the current version starts as it is (details in
-`~/.cache/Snappy/update.log`). Desktop shortcuts never trigger it. Commits of your own are replayed on top of
-the new version. `SNAPPY_NO_UPDATE=1` turns it off; `SNAPPY_UPDATE_REF` picks the branch (default `origin/main`).
+Snappy updates itself to the latest GitHub release when it starts (see [Updates](#updates)); desktop shortcuts
+never trigger it.
 
 On Linux, Snappy hands the capture over to **gpu-screen-recorder**:
 
@@ -117,7 +114,35 @@ On Linux, Snappy hands the capture over to **gpu-screen-recorder**:
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-Produces `dist\Snappy\Snappy.exe`, self-contained, with FFmpeg included.
+Produces `dist\Snappy\Snappy.exe`, self-contained, with FFmpeg included, and `dist\Snappy-<version>-windows.zip`,
+the archive to attach to the GitHub release (`Snappy.exe` updates itself from it).
+
+## Updates
+
+Snappy follows the **GitHub releases**, not the latest commit: a version is only installed once it is published as
+a release (drafts and pre-releases are left out). `snappy/update.py` holds the rules shared by Windows and Linux;
+only installing `Snappy.exe` belongs to the system layer (`platforms/windows/update.py`):
+
+- **From the sources** (git clone: `run.sh`, `snappy`, `run.bat`): before starting, the launcher runs
+  `python -m snappy.update`, which moves the clone to the tag of the latest release (fast-forward; commits of your
+  own are replayed on top of it) and installs the new Python dependencies. A clone already at that release or ahead
+  of it (development) is left alone.
+- **`Snappy.exe`** (Windows): a little after starting, then every 6 hours, Snappy downloads the release's
+  `Snappy-<version>-windows.zip` in the background, checks its SHA-256, and unpacks it into
+  `%LOCALAPPDATA%\Snappy\update`. It is installed when Snappy restarts: "Restart to update" in the notification
+  area menu, or the next start. A small PowerShell script waits for Snappy to quit, swaps the folders (the previous
+  version is put back if the copy fails) and starts Snappy again. A folder that cannot be written without
+  administrator rights (Program Files) is not updated.
+- After an update, Snappy says so once ("Snappy was updated to version …").
+
+It never blocks the launch: offline (8 s timeout), no release yet, Snappy already running, local edits not committed,
+a conflict or a failed dependency install, and the current version runs as it is. Details in `update.log`
+(`~/.cache/Snappy/`, `%LOCALAPPDATA%\Snappy\`). `SNAPPY_NO_UPDATE=1` turns it off; `SNAPPY_UPDATE_REPO` follows
+another repository (`owner/name`).
+
+**Publishing a version**: set the version in `snappy/__init__.py` and `pyproject.toml` (a test checks that they
+agree), commit, tag it `v<version>` (`git tag v0.2.0 && git push origin main v0.2.0`), run `build.ps1`, then create
+the GitHub release on that tag with `dist\Snappy-<version>-windows.zip` attached.
 
 ## Shortcuts
 
@@ -173,6 +198,7 @@ The code follows an MVC architecture, and everything that depends on the operati
 snappy/
   app.py              entry point: log, single instance, creation of the main controller
   i18n.py             interface language: tr() and the French catalog (locales/fr.py)
+  update.py           updates from the GitHub releases: git clone, download of a packaged Snappy
   models/             data (no UI)
     settings.py       settings (settings.json) and tracks to record
     library.py        clip index, thumbnails, previews, trash, quota
@@ -203,14 +229,13 @@ snappy/
   platforms/          system layer: `from snappy.platforms import system`
     windows/          Windows: folders, start at login, Recycle Bin, global shortcut (RegisterHotKey),
                       screen capture (ddagrab / gdigrab), WASAPI process loopback, named pipe,
-                      "job" object, accent color, Steam
+                      "job" object, accent color, Steam, installing an update of Snappy.exe (update.py)
     linux/            Linux: gpu-screen-recorder replay and manual recording (replay.py), PipeWire sources
                       (capture.py), KDE / GNOME / X11 shortcuts (hotkeys.py), XDG folders, autostart, trash,
                       Wayland toast over the game (overlay_toast.py, run by the system Python)
     generic.py        neutral fallback for other systems (starting point of a port)
   locales/            interface translations (fr.py: English text -> French text)
 tests/                tests (python -m unittest discover tests)
-scripts/update.sh     Linux: update from GitHub at launch (called by run.sh)
 ```
 
 Porting Snappy to another system means writing a `platforms/<system>/` module that offers the same functions as
@@ -229,8 +254,8 @@ English in the code and wrapped in `tr()`.
 ## Data
 
 - Settings and log: `%APPDATA%\Snappy\` (Linux: `~/.config/Snappy/`): `settings.json`, `snappy.log`
-- Temporary buffer and caches (encoder benchmark, share MP3s): `%LOCALAPPDATA%\Snappy\`
-  (Linux: `~/.cache/Snappy/`, including the replays while they are assembled, the GitHub update log `update.log`,
+- Temporary buffer and caches (encoder benchmark, share MP3s), update log `update.log`: `%LOCALAPPDATA%\Snappy\`
+  (Linux: `~/.cache/Snappy/`, including the replays while they are assembled,
   and the decoded audio of long clips opened in the editor, in `cache/editor-audio/`)
 - Clips: `Videos\Snappy\` by default (`.snappy-index.json` index, thumbnails in `.thumbs\`, exports in `Exports\`)
 
@@ -245,7 +270,9 @@ gpu-screen-recorder options, the desktop shortcuts and the assembly of a multi-s
 Windows (except the parts Windows cannot run: Unix sockets of the manual recording). It also checks the manual
 recording against fake gpu-screen-recorder command sockets, and the editor audio of long clips (memory-mapped, same
 samples and waveforms). `tests/test_editor_ui.py` drives the timeline with a simulated mouse (moving a removed
-passage) and the `B` key. `tests/test_i18n.py` checks that every interface string has a French translation with the
+passage) and the `B` key. `tests/test_update.py` checks the updates against a local fake GitHub API and local git repositories (move
+to the release tag, local commits, conflicts, dependencies put back) and, on Windows, the download, checksum and
+install of `Snappy.exe` by the PowerShell script. `tests/test_i18n.py` checks that every interface string has a French translation with the
 same placeholders, and that no French text is left in the code.
 
 The integration tests run a real FFmpeg with synthetic sources: they check that a clip never exceeds the limit, that a partial buffer gives a shorter clip, that the buffer's disk usage stays bounded, that two screens and three tracks (plus the Mix) are recorded, that restarting the buffer leaves a single FFmpeg, that a manual recording keeps everything from start to stop (longer than the replay) while clips can still be saved, and that the exports (multicam edit, target size, Original, MP3) are correct.
@@ -259,5 +286,4 @@ The integration tests run a real FFmpeg with synthetic sources: they check that 
 - Linux: on GNOME with Wayland, the foreground application is not known (clips outside a Steam game keep the
   "Snappy …" name); with several screens, each one has its own recorder and the ends of the files are aligned (a gap
   of a few milliseconds is possible); the desktop portal only records one screen.
-- The update at launch exists on Linux only (git clone). On Windows, `Snappy.exe` is not updated automatically.
 - A manual recording in progress is lost when the buffer restarts (settings applied, pause) or when Snappy quits.

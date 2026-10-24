@@ -30,5 +30,12 @@ Invoke-Step "creating the icon" { & .\.venv\Scripts\python.exe scripts\make_icon
 
 Invoke-Step "PyInstaller" { & .\.venv\Scripts\pyinstaller.exe --noconfirm snappy.spec }
 if (-not (Test-Path (Join-Path $dist "Snappy.exe"))) { throw "Failed: dist\Snappy\Snappy.exe was not created" }
+
+# Zip attached to the GitHub release: Snappy.exe downloads it to update itself (snappy/update.py).
+$version = (& .\.venv\Scripts\python.exe -c "import snappy; print(snappy.__version__)").Trim()
+$zip = Join-Path $PSScriptRoot "dist\Snappy-$version-windows.zip"
+if (Test-Path $zip) { Remove-Item $zip }
+Compress-Archive -Path $dist -DestinationPath $zip
 Write-Host ""
 Write-Host "OK: dist\Snappy\Snappy.exe"
+Write-Host "Release asset: dist\Snappy-$version-windows.zip (attach it to the GitHub release v$version)"

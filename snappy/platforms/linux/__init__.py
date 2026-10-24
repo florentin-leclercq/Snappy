@@ -8,6 +8,7 @@ from .capture import (CAN_CAPTURE, DEFAULT_METHOD, MANUAL_RECORDING, DIRECT_AUDI
                       capture_plan, fallback_capture_method, list_microphones, make_capture_source, open_audio_pipe,
                       prepare_audio_process, render_node, replay_buffer_class, screen_capture_methods,
                       video_input_args, video_prefilter)
+from ..generic import SELF_UPDATE, UPDATE_ASSET, install_update, long_path   # updates: git clone (update.py)
 from .process import BACKGROUND, EXE_SUFFIX, NO_WINDOW, boost_priority, kill_with_parent, kill_with_parent_pid
 from .system import (CHAT_APPS, NAME, OVERLAY_TOAST, TEXT, accent_color, buffer_dir, cache_dir, data_dir,
                      enable_dpi_awareness, foreground_app_info, open_folder, play_wav, reveal, send_to_recycle_bin,
@@ -38,4 +39,5 @@ __all__ = [
     "list_microphones", "audio_apps", "prepare_audio_process", "TEXT", "CHAT_APPS", "OVERLAY_TOAST",
     "system_sounds", "ENCODER_VENDORS", "ENCODER_CHOICES", "render_node", "replay_buffer_class",
     "DIRECT_AUDIO", "audio_input_args", "show_overlay_toast", "MANUAL_RECORDING",
+    "SELF_UPDATE", "UPDATE_ASSET", "install_update", "long_path",
 ]

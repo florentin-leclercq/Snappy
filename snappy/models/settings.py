@@ -115,6 +115,7 @@ class Settings:
     sound: str = "shutter"
     sound_volume: int = 70              # %
     show_toast_on_save: bool = True
+    last_version: str = ""              # version of the last start: "Snappy updated" once after an update
 
     # ------------------------------------------------------------------
     @staticmethod

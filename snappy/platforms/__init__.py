@@ -33,6 +33,8 @@ What `system` provides:
   system_sounds()                       notification placed by Snappy; system sounds
   show_overlay_toast(...)               toast over the game where OVERLAY_TOAST is False (Wayland)
   MANUAL_RECORDING                      manual recording (start / stop) next to the replay
+  SELF_UPDATE, UPDATE_ASSET,            packaged Snappy that updates itself from a release asset
+  install_update(...), long_path(path)  (Windows: Snappy.exe); swapping the install folder
 """
 
 import sys

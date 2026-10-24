@@ -17,6 +17,7 @@ class TrayView(QObject):
     openRequested = Signal()
     pauseToggled = Signal()
     openFolderRequested = Signal()
+    updateRequested = Signal()
     quitRequested = Signal()
 
     def __init__(self, parent=None):
@@ -39,6 +40,8 @@ class TrayView(QObject):
         self.act_pause = action(tr("Pause the buffer"), self.pauseToggled)
         action(tr("Open the clips folder"), self.openFolderRequested)
         menu.addSeparator()
+        self.act_update = action("", self.updateRequested)
+        self.act_update.setVisible(False)   # an update was downloaded (Snappy.exe)
         action(tr("Quit Snappy"), self.quitRequested)
         self.tray.setContextMenu(menu)
         self._menu = menu
@@ -58,6 +61,10 @@ class TrayView(QObject):
         text = tr("Stop the recording ({key})", key=hotkey) if recording else tr("Start a recording ({key})", key=hotkey)
         if self.act_record.text() != text:
             self.act_record.setText(text)
+
+    def set_update(self, version: str) -> None:
+        self.act_update.setText(tr("Restart to update (version {version})", version=version))
+        self.act_update.setVisible(True)
 
     def set_paused(self, paused: bool) -> None:
         self.act_pause.setText(tr("Resume the buffer") if paused else tr("Pause the buffer"))

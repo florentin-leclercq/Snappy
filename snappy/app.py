@@ -13,7 +13,7 @@ from PySide6.QtCore import QCoreApplication
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication
 
-from . import APP_NAME, __version__
+from . import APP_NAME, __version__, update
 from .models.settings import Settings, app_data_dir
 from .platforms import system
 
@@ -87,6 +87,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if _already_running():
         log.info("Snappy is already running: existing window shown")
+        return 0
+    # Snappy.exe: an update downloaded last time is installed now (Snappy restarts by itself).
+    if update.self_updating() and update.apply_staged(os.getpid(), sys.argv[1:]):
         return 0
     server = QLocalServer()
     QLocalServer.removeServer(SINGLE_INSTANCE_KEY)

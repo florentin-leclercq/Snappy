@@ -4,6 +4,7 @@ area and the window; creates the gallery, editor and settings controllers."""
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 
@@ -11,7 +12,7 @@ from PySide6.QtCore import QObject, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QGuiApplication, QPixmap
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from .. import APP_NAME
+from .. import APP_NAME, __version__, update
 from ..i18n import tr
 from ..models import games
 from ..models.library import ClipLibrary, safe_filename
@@ -35,6 +36,7 @@ log = logging.getLogger("snappy")
 class _StateBridge(QObject):
     """Forwards the buffer state changes (FFmpeg thread) to the UI thread."""
     state = Signal(str, str)
+    updateReady = Signal(str)       # version downloaded (update thread)
 
 
 class AppController(QObject):
@@ -42,6 +44,7 @@ class AppController(QObject):
         super().__init__()
         self.qapp = qapp
         self.settings_ctl = SettingsController(Settings.load(), self)
+        updated_from = self._remember_version()
         self.library = ClipLibrary(self.settings.clips_dir)
         self.pool = QThreadPool.globalInstance()
         self._saving = False
@@ -53,6 +56,7 @@ class AppController(QObject):
 
         self.bridge = _StateBridge()
         self.bridge.state.connect(self._on_state)
+        self.bridge.updateReady.connect(self._on_update_ready)
         # Replay engine for the system (Windows: FFmpeg; Linux: gpu-screen-recorder).
         engine = ReplayBuffer if demo else system.replay_buffer_class()
         self.recorder = engine(self.settings, self._monitors(), test_mode=demo,
@@ -83,6 +87,7 @@ class AppController(QObject):
         self.tray.openRequested.connect(self.window.bring_to_front)
         self.tray.pauseToggled.connect(self.toggle_pause)
         self.tray.openFolderRequested.connect(lambda: system.open_folder(self.library.folder))
+        self.tray.updateRequested.connect(self.restart_to_update)
         self.tray.quitRequested.connect(self.quit)
 
         self.hotkeys = system.GlobalHotkeys(self)
@@ -103,12 +108,21 @@ class AppController(QObject):
 
         # Minimized only when the system starts it at login ("minimized" option checked): opened
         # by hand (.exe, run.bat, run.sh), Snappy shows its window.
-        if start_minimized:
+        if updated_from:
+            self.tray.notify(tr("Snappy was updated to version {version}.", version=__version__))
+        elif start_minimized:
             self.tray.notify(tr("Snappy is recording in the background. {key} to save a clip.",
                                 key=self.settings.hotkey_save))
-        else:
+        if not start_minimized:
             self.window.show()
         QTimer.singleShot(0, self._start_recorder)
+
+        # Snappy.exe: looks for a new release a little after starting, then every few hours.
+        self._update_version = ""
+        if update.self_updating():
+            QTimer.singleShot(20_000, self._check_for_update)
+            self.update_timer = QTimer(self, interval=6 * 3600 * 1000, timeout=self._check_for_update)
+            self.update_timer.start()
 
     @property
     def settings(self) -> Settings:
@@ -306,6 +320,53 @@ class AppController(QObject):
         if self._last_clip and self.library.get(self._last_clip.file):
             self.window.bring_to_front()
             self.window.open_clip(self._last_clip)
+
+    # ------------------------------------------------------------ updates (update.py)
+    def _remember_version(self) -> str:
+        """Previous version when this start follows an update ("" otherwise); remembers this one."""
+        last = self.settings.last_version
+        if last == __version__:
+            return ""
+        self.settings.last_version = __version__
+        try:
+            self.settings.save()
+        except OSError:
+            pass
+        return last if last and update.is_newer(__version__, last) else ""
+
+    def _check_for_update(self) -> None:
+        """Snappy.exe: downloads the latest release in the background; installed at the restart."""
+        if self._update_version:
+            return
+
+        def run():
+            try:
+                release = update.latest_release()
+                if release is None or not update.is_newer(release.tag):
+                    return
+                staged = update.staged_update()
+                if not (staged and staged[0] == release.version):
+                    if not update.can_replace(update.install_dir()):
+                        update.log(f"{release.tag} available, but {update.install_dir()} cannot be replaced "
+                                   "without administrator rights")
+                        return
+                    update.download_release(release)
+                self.bridge.updateReady.emit(release.version)
+            except OSError as exc:
+                update.log(f"update check failed: {exc}")
+
+        threading.Thread(target=run, name="update-check", daemon=True).start()
+
+    def _on_update_ready(self, version: str) -> None:
+        self._update_version = version
+        self.tray.set_update(version)
+        self.tray.notify(tr("Snappy {version} is ready: it is installed when Snappy restarts.", version=version),
+                         ms=6000)
+
+    def restart_to_update(self) -> None:
+        self._warn_recording_lost()
+        if update.apply_staged(os.getpid()):
+            self.quit()
 
     # ------------------------------------------------------------ settings
     def _on_accent(self, value: str) -> None:

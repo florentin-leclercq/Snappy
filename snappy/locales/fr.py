@@ -583,6 +583,10 @@ STRINGS: dict[str, str] = {
     "Could not start the recording: {error}": "Impossible de démarrer l'enregistrement : {error}",
     "No recording in progress.": "Aucun enregistrement en cours.",
     "The recording is empty.": "L'enregistrement est vide.",
+    "Restart to update (version {version})": "Redémarrer pour mettre à jour (version {version})",
+    "Snappy was updated to version {version}.": "Snappy a été mis à jour (version {version}).",
+    "Snappy {version} is ready: it is installed when Snappy restarts.":
+        "Snappy {version} est prêt : il sera installé au redémarrage de Snappy.",
     "Could not stop the recording: {error}": "Impossible d'arrêter l'enregistrement : {error}",
     "gpu-screen-recorder did not write the recording.": "gpu-screen-recorder n'a pas écrit l'enregistrement.",
     "Recording not started": "Enregistrement non démarré",

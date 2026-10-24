@@ -145,6 +145,26 @@ def show_overlay_toast(title: str, subtitle: str, ok: bool = True, ms: int = 350
 
 
 # --------------------------------------------------------------------------
+# Updates (snappy/update.py)
+# --------------------------------------------------------------------------
+# A packaged Snappy (not a git clone) that installs its own updates: the release asset it downloads.
+SELF_UPDATE = False
+UPDATE_ASSET = ""      # regular expression on the asset name
+
+
+def long_path(path: Path) -> str:
+    """Path usable however deep it is."""
+    return str(path.resolve())
+
+
+def install_update(source: Path, target: Path, staging: Path, log_path: Path, version: str,
+                   wait_pid: int, args: list[str]) -> bool:
+    """Replaces the install folder `target` with `source` once process `wait_pid` has quit, then
+    starts Snappy again with `args`. False: not possible here."""
+    return False
+
+
+# --------------------------------------------------------------------------
 # Processes
 # --------------------------------------------------------------------------
 def kill_with_parent(proc) -> None:

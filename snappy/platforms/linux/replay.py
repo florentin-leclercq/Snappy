@@ -13,14 +13,13 @@
   encode, until "stop-replay-recording". With several screens, gpu-screen-recorder writes the
   timestamp of each file's first frame (same clock for all): the screens are aligned exactly.
 
-Same interface as `services.recorder.ReplayBuffer`. `LinuxReplayBuffer` picks the engine:
+A `services.recorder.ReplayEngine`, like the FFmpeg buffer. `LinuxReplayBuffer` picks the engine:
 gpu-screen-recorder, or the FFmpeg buffer (x11grab) for the "x11" method and as a fallback when
 gpu-screen-recorder cannot run (no graphics acceleration: virtual machine...).
 """
 
 from __future__ import annotations
 
-import collections
 import json
 import logging
 import shutil
@@ -29,14 +28,13 @@ import socket
 import subprocess
 import threading
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
 from ...i18n import tr
-from ...models.settings import Settings, audio_tracks, default_buffer_dir
+from ...models.settings import Settings, audio_tracks
 from ...services import ffmpeg as ff
-from ...services.recorder import RecorderError, ReplayBuffer, SavedClip, mux_args
+from ...services.recorder import RecorderError, ReplayBuffer, ReplayEngine, SavedClip, mux_args
 from . import capture
 from .process import die_with_parent
 
@@ -54,7 +52,7 @@ def no_gpu_message() -> str:
               "missing here (virtual machine, missing driver…).")
 
 
-class GsrReplayBuffer:
+class GsrReplayBuffer(ReplayEngine):
     """Manages the replay gpu-screen-recorders and the assembly of the clips."""
 
     # Time without a crash after which the replay is considered active.
@@ -67,41 +65,18 @@ class GsrReplayBuffer:
                  buffer_dir: Path | None = None,
                  on_state: Callable[[str, str], None] | None = None):
         """monitors: {screen number: {"geometry": (x, y, w, h), "label": str, "name": "DP-1"}}."""
-        self.settings = settings.copy()
-        self.monitors = monitors or {}
-        self.buffer_dir = Path(buffer_dir or default_buffer_dir())
-        self.on_state = on_state or (lambda state, msg: None)
+        super().__init__(settings, monitors, buffer_dir, on_state)
         self._procs: list[subprocess.Popen] = []
-        self._stderr_tail: collections.deque[str] = collections.deque(maxlen=40)
-        self._lock = threading.RLock()
-        self._proc_lock = threading.RLock()
-        self._save_lock = threading.Lock()
-        self._running = False
         self._announced = False
         self._force_cpu = False
-        self._watchdog: threading.Thread | None = None
         self.encoder = "gpu-screen-recorder"
-        self.state = "stopped"
-        self.started_at = 0.0
-        self.tracks: list[dict] = []
-        self.screens: list[dict] = []
         self._targets: list[str] = []      # -w of each recorded screen
         self._errors: list[str] = []       # gpu-screen-recorder error lines (lowercase)
         # Called (from the watchdog thread) when gpu-screen-recorder cannot run here.
         self.on_fatal: Callable[[str], None] | None = None
-        self.recording_since: float | None = None   # manual recording in progress (time.time())
 
-    # ------------------------------------------------------------------ state
-    def _set_state(self, state: str, message: str = "") -> None:
-        self.state = state
-        try:
-            self.on_state(state, message)
-        except Exception:
-            log.exception("on_state")
-
-    @property
-    def is_running(self) -> bool:
-        return self._running
+    def _capturing(self) -> bool:
+        return self._running and self._alive() and self._announced
 
     # ------------------------------------------------------------- command
     def _screen_list(self) -> tuple[list[dict], list[str]]:
@@ -375,10 +350,7 @@ class GsrReplayBuffer:
     def _make_clip(self, files: list[Path | None], dest_dir: Path, name: str | None, limit: float | None,
                    aligned_starts: bool = False) -> SavedClip:
         """Screen files -> clip MP4 in dest_dir; the screen files are deleted afterwards."""
-        dest_dir = Path(dest_dir)
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        created = datetime.now()
-        out = ReplayBuffer.unique_path(dest_dir, name or f"Snappy {created:%Y-%m-%d %H-%M-%S}")
+        out, created = self._new_clip_path(dest_dir, name)
         inputs = [(sc, f) for sc, f in zip(self.screens, files) if f is not None]
         offsets = None
         if aligned_starts and len(inputs) > 1:
@@ -429,16 +401,11 @@ class GsrReplayBuffer:
             return False, tr("Unreadable reply from gpu-screen-recorder")
         return reply.get("result") == "ok", str(reply.get("data") or "")
 
-    @property
-    def is_recording(self) -> bool:
-        return self.recording_since is not None
-
-    def start_recording(self) -> None:
-        """Starts a manual recording on every screen (everything from now on, until stop)."""
+    def start_recording(self, dest_dir: Path | None = None) -> None:
+        """Starts a manual recording on every screen (everything from now on, until stop). The
+        recorders write it next to their replays (`-ro`): dest_dir is not needed."""
         with self._save_lock:
-            if not self._running or not self._alive() or not self._announced:
-                raise RecorderError(tr("The buffer is not running."))
-            if self.recording_since is not None:
+            if not self._check_can_start_recording():
                 return
             ok, data = self._ipc(0, "start-replay-recording")
             if not ok:
@@ -450,7 +417,6 @@ class GsrReplayBuffer:
             self.recording_since = time.time()
 
     def stop_recording(self, dest_dir: Path, name: str | None = None) -> SavedClip:
-        """Stops the manual recording and writes it as a clip (the whole recording). Blocking."""
         with self._save_lock:
             if self.recording_since is None:
                 raise RecorderError(tr("No recording in progress."))

@@ -153,8 +153,8 @@ class AppController(QObject):
 
     @property
     def can_record(self) -> bool:
-        """Manual recording (start / stop) offered by the replay engine (gpu-screen-recorder)."""
-        return self.recorder.can_record
+        """Manual recording (start / stop) offered by the platform and the current replay engine."""
+        return system.MANUAL_RECORDING and self.recorder.can_record
 
     @property
     def is_recording(self) -> bool:
@@ -218,7 +218,7 @@ class AppController(QObject):
             self.pool.start(job)
             return
         try:
-            self.recorder.start_recording()
+            self.recorder.start_recording(self.library.folder)
         except RecorderError as exc:
             self._show_toast(tr("Recording not started"), str(exc)[:120], ok=False)
             return

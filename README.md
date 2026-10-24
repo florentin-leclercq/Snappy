@@ -19,6 +19,9 @@ The interface is available in English and French: it follows the system language
 
 **Capture**
 - **Replay buffer**: length configurable from 5 s to 10 min (30 s by default), clips of a controlled length (within 1 s, never longer).
+- **Manual recording** (`Alt+F9` by default, press again to stop): records everything from now on, without a length
+  limit, on top of the replay (which keeps working), with no second encode. The recording time shows in the window
+  and the notification area.
 - **Several screens** recorded at once, in the same file (one video stream per screen, perfectly in sync).
 - **Separate audio tracks**, one per source: the game (all the PC sound, everything except the voice chat, or a single application), the voice chat (Discord, TeamSpeak…), the microphone, and optionally one track per application (Spotify, browser…). On Windows, the sound of each application is captured with *process loopback*: nothing is rerouted, your outputs stay untouched, and an application started after Snappy is found by itself. Audio mixers that replay all the sound, microphone included (SteelSeries Sonar, Voicemeeter…), are left out of the game track. The sound Snappy plays itself (editor, gallery hover, confirmation sound) is never recorded into the other tracks; add "Snappy.exe" to the separate applications to keep it on its own track (from run.bat as well as from the .exe). The sound of an application playing into a 7.1 output (Sonar, "surround" headsets) is brought back to its real level: Windows lowers it by about 13 dB when converting it to stereo.
 - The file starts with a **"Mix" track** (the tracks mixed at their default levels): Discord, browsers and the file manager, which only play the first track, hear everything.
@@ -105,9 +108,8 @@ On Linux, Snappy hands the capture over to **gpu-screen-recorder**:
   Sway…), on the recorded screen, that never takes the focus and lets the clicks through. It needs PyGObject
   and gtk4-layer-shell in the system Python (`pacman -S python-gobject gtk4-layer-shell`); otherwise, and on
   GNOME, the confirmation is a desktop notification.
-- **Manual recording** (`Alt+F9` by default, press again to stop): records everything from now on, on top of the
-  replay, through gpu-screen-recorder's command socket (no second encode). With several screens, they are aligned
-  on the timestamp of their first frame. The recording time shows in the window and the notification area.
+- **Manual recording** (`Alt+F9`): through gpu-screen-recorder's command socket (no second encode). With several
+  screens, they are aligned on the timestamp of their first frame. With the FFmpeg engine, it works as on Windows.
 
 ## Building the executable (Windows)
 
@@ -122,7 +124,7 @@ Produces `dist\Snappy\Snappy.exe`, self-contained, with FFmpeg included.
 | Where | Key | Action |
 |---|---|---|
 | Everywhere | `Alt+F10` (configurable) | Save a clip |
-| Everywhere (Linux) | `Alt+F9` (configurable) | Start / stop a recording |
+| Everywhere | `Alt+F9` (configurable) | Start / stop a recording |
 | Gallery | `Ctrl`/`Shift` + click, `Ctrl+A`, `Esc` | Multiple selection |
 | Editor | `Space` | Play / pause |
 | Editor | `I` / `O` | Excerpt start / end |
@@ -151,6 +153,11 @@ Game / chat / mic / apps (WASAPI) ─────────┘    ▲         
 - FFmpeg forces an IDR keyframe every second: each segment stands on its own, so they can be joined without re-encoding.
 - The `segment` muxer reuses the files (`segment_wrap`): the buffer's disk usage stays constant (length + 15 s).
 - When saving, Snappy waits for the current segment to be closed (<= 1 s), picks the most recent segments whose total length does not exceed the limit, then remuxes them with a `-t limit` cap.
+- **Manual recording**: from the key press on, every segment the ring closes (starting with the one being written,
+  which holds the moment of the key press) is appended to a hidden `.recording … .ts.part` file in the clips folder,
+  before the ring reuses its name. At stop, the current segment is awaited and that file is remuxed like a replay,
+  without the length cap: no second encode, and the replay keeps working meanwhile. A buffer restart (settings
+  applied, pause) ends the recording; if FFmpeg restarts by itself, the clip keeps what was recorded before.
 - Each audio track is captured in Python (WASAPI process loopback through `comtypes`, microphone through `soundcard`), padded with silence when nothing plays (WASAPI then delivers nothing) to stay in sync with the video, and the tracks are interleaved into a named pipe read by FFmpeg, which splits them.
 - Audio capture runs in **a separate process**, at high priority, that does nothing else: Windows gives an application capture only a 10 ms buffer, and the slightest delay (interface, thumbnails…) would lose a packet, heard as a "click". Snappy sends it the list of applications to capture every 2 s. Each track keeps a 60 ms reserve and smoothly compensates the clock drift of audio outputs (at most ±0.5 % speed) instead of dropping sound.
 - Windows can only exclude one application per capture: when several must be left out (chat, separate apps, audio mixer), the track adds up one capture per application that plays sound, looked up every 2 s.
@@ -172,7 +179,8 @@ snappy/
     edit.py           edit of a clip: excerpt, cuts, multicam edit, mix, presets, undo
     games.py          running Steam game, installed games, cached artwork
   services/           engine (no UI)
-    recorder.py       FFmpeg replay buffer (screens, tracks) and clips
+    recorder.py       replay engine base (ReplayEngine), FFmpeg replay buffer (screens, tracks), clips and
+                      manual recording from its segments
     audio.py          audio tracks, buffers, resampling, delivery to FFmpeg
     audio_worker.py   dedicated audio process: captures the tracks and feeds FFmpeg
     audio_preview.py  multitrack playback of the editor
@@ -209,8 +217,10 @@ Porting Snappy to another system means writing a `platforms/<system>/` module th
 `generic.py` (the list is at the top of `platforms/__init__.py`), then selecting it in that file: the rest of the
 code never imports `platforms.windows` or `platforms.linux`. The replay engine itself is provided by the platform
 (`replay_buffer_class()`): FFmpeg on Windows, gpu-screen-recorder on Linux, with the same interface and the same clip
-format. Manual recording is part of that interface (`can_record`, `start_recording()`, `stop_recording()`): only the
-gpu-screen-recorder engine offers it, the FFmpeg one says it cannot (`can_record = False`).
+format. Both derive from `services.recorder.ReplayEngine`, which holds what they share (state, clip naming, the
+manual recording interface: `can_record`, `start_recording()`, `stop_recording()`, `recording_since`); each engine
+records in its own way (segments of the FFmpeg ring, command sockets of gpu-screen-recorder). The platform says
+whether it offers manual recording (`MANUAL_RECORDING`).
 
 To translate the interface into another language, add a `snappy/locales/<code>.py` module with a `STRINGS`
 dictionary (see `fr.py`) and add the code to `LANGUAGES` in `snappy/i18n.py`. Interface strings are written in
@@ -238,7 +248,7 @@ samples and waveforms). `tests/test_editor_ui.py` drives the timeline with a sim
 passage) and the `B` key. `tests/test_i18n.py` checks that every interface string has a French translation with the
 same placeholders, and that no French text is left in the code.
 
-The integration tests run a real FFmpeg with synthetic sources: they check that a clip never exceeds the limit, that a partial buffer gives a shorter clip, that the buffer's disk usage stays bounded, that two screens and three tracks (plus the Mix) are recorded, that restarting the buffer leaves a single FFmpeg, and that the exports (multicam edit, target size, Original, MP3) are correct.
+The integration tests run a real FFmpeg with synthetic sources: they check that a clip never exceeds the limit, that a partial buffer gives a shorter clip, that the buffer's disk usage stays bounded, that two screens and three tracks (plus the Mix) are recorded, that restarting the buffer leaves a single FFmpeg, that a manual recording keeps everything from start to stop (longer than the replay) while clips can still be saved, and that the exports (multicam edit, target size, Original, MP3) are correct.
 
 ## Known limitations
 
@@ -249,5 +259,5 @@ The integration tests run a real FFmpeg with synthetic sources: they check that 
 - Linux: on GNOME with Wayland, the foreground application is not known (clips outside a Steam game keep the
   "Snappy …" name); with several screens, each one has its own recorder and the ends of the files are aligned (a gap
   of a few milliseconds is possible); the desktop portal only records one screen.
-- Manual recording (`Alt+F9`) and the update at launch exist on Linux only (gpu-screen-recorder engine, git clone).
-  On Windows, `Snappy.exe` is not updated automatically.
+- The update at launch exists on Linux only (git clone). On Windows, `Snappy.exe` is not updated automatically.
+- A manual recording in progress is lost when the buffer restarts (settings applied, pause) or when Snappy quits.

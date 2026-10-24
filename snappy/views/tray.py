@@ -34,7 +34,7 @@ class TrayView(QObject):
 
         self.act_save = action(tr("Save a clip"), self.saveRequested)
         self.act_record = action(tr("Start a recording"), self.recordRequested)
-        self.act_record.setVisible(False)   # only with an engine that can record (Linux)
+        self.act_record.setVisible(False)   # only with an engine that can record
         action(tr("Open Snappy"), self.openRequested)
         self.act_pause = action(tr("Pause the buffer"), self.pauseToggled)
         action(tr("Open the clips folder"), self.openFolderRequested)

@@ -582,6 +582,7 @@ STRINGS: dict[str, str] = {
     "Unreadable reply from gpu-screen-recorder": "Réponse illisible de gpu-screen-recorder",
     "Could not start the recording: {error}": "Impossible de démarrer l'enregistrement : {error}",
     "No recording in progress.": "Aucun enregistrement en cours.",
+    "The recording is empty.": "L'enregistrement est vide.",
     "Could not stop the recording: {error}": "Impossible d'arrêter l'enregistrement : {error}",
     "gpu-screen-recorder did not write the recording.": "gpu-screen-recorder n'a pas écrit l'enregistrement.",
     "Recording not started": "Enregistrement non démarré",

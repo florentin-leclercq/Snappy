@@ -27,7 +27,7 @@ from .. import generic
 log = logging.getLogger(__name__)
 
 CAN_CAPTURE = True
-# Manual recording (start / stop) through gpu-screen-recorder's command socket.
+# Manual recording (start / stop): gpu-screen-recorder's command socket, or the FFmpeg ring's segments.
 MANUAL_RECORDING = True
 DEFAULT_METHOD = "kms"
 # FFmpeg graphics card encoders (exports); the buffer itself encodes with gpu-screen-recorder.

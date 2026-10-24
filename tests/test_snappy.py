@@ -21,7 +21,7 @@ from snappy.models import edit  # noqa: E402
 from snappy.services import media  # noqa: E402
 from snappy.models.settings import Settings, audio_tracks  # noqa: E402
 from snappy.models.library import ClipLibrary  # noqa: E402
-from snappy.services.recorder import ReplayBuffer, Segment  # noqa: E402
+from snappy.services.recorder import RecorderError, ReplayBuffer, Segment  # noqa: E402
 from snappy.platforms.windows.hotkeys import MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, parse_hotkey  # noqa: E402
 
 
@@ -283,6 +283,38 @@ class TestReplayBuffer(unittest.TestCase):
         self.assertTrue(clip.mix_track)
         self.assertEqual([t["kind"] for t in clip.tracks], ["game", "chat", "mic"])
         self.assertLessEqual(clip.duration, 5.05)
+
+    def test_manual_recording(self):
+        """start / stop on top of the replay: everything in between is kept (longer than the replay),
+        with both screens and every track, a clip can still be saved meanwhile, and the
+        recording file next to the clips is cleaned up."""
+        rb = self.start_buffer(3, screens=2, tracks=2)
+        clips = self.tmp / "clips"
+        try:
+            time.sleep(1.5)
+            rb.start_recording(clips)
+            self.assertTrue(rb.is_recording)
+            self.assertTrue(rb.can_record)
+            time.sleep(3)
+            replay = rb.save_clip(clips, name="replay")          # the ring keeps working
+            self.assertLessEqual(replay.duration, 3.05)
+            time.sleep(4)
+            saved = rb.stop_recording(clips, name="manual")
+            self.assertFalse(rb.is_recording)
+            with self.assertRaises(RecorderError):
+                rb.stop_recording(clips)
+            # A recording interrupted by a buffer stop leaves nothing behind.
+            rb.start_recording(clips)
+            time.sleep(1.5)
+        finally:
+            rb.stop()
+        self.assertFalse(rb.is_recording)
+        self.assertGreater(saved.duration, 6.5)                   # ~7 s, not capped at the replay's 3 s
+        self.assertLess(saved.duration, 9.5)
+        info = ff.media_info(saved.path)
+        self.assertEqual((info["video_streams"], info["audio_streams"]), (2, 3))   # Mix + 2 tracks
+        self.assertTrue(saved.mix_track)
+        self.assertEqual(sorted(p.name for p in clips.iterdir()), ["manual.mp4", "replay.mp4"])
 
     def test_restart_leaves_a_single_ffmpeg(self):
         import psutil

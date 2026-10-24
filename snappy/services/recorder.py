@@ -15,6 +15,13 @@ How it works:
 * With several audio tracks, the MP4 starts with a "Mix" track (the tracks mixed at their default
   levels): Discord, browsers and File Explorer only play the first track. The separate tracks
   follow, untouched, for the editor.
+* Manual recording (start / stop, on top of the replay): every segment closed from the key press
+  on is appended to one MPEG-TS file next to the clips, before the ring reuses its name; at stop,
+  the current segment is awaited and that file is remuxed into the clip MP4 like a replay, with
+  no second encode and no length limit. The ring keeps working for the clips meanwhile.
+
+`ReplayEngine` holds what every replay engine shares (this FFmpeg ring, gpu-screen-recorder on
+Linux): state, clip naming and the manual recording interface.
 """
 
 from __future__ import annotations
@@ -98,41 +105,39 @@ def mux_args(settings: Settings, tracks: list, screens: list, video_refs: list[s
     return args
 
 
-class ReplayBuffer:
-    """Manages the FFmpeg process of the buffer and the extraction of the clips."""
+class ReplayEngine:
+    """Base of the replay engines: what the controllers use, whatever records the screen.
+
+    An engine provides start(), stop(), restart(settings), buffered_seconds(), save_clip(dest_dir,
+    name) and, when `can_record` is True, start_recording(dest_dir) / stop_recording(dest_dir,
+    name) for a manual recording on top of the replay."""
+
+    can_record = False
 
     def __init__(self, settings: Settings,
                  monitors: dict[int, dict] | None = None,
-                 test_mode: bool = False,
                  buffer_dir: Path | None = None,
                  on_state: Callable[[str, str], None] | None = None):
         """
-        monitors   : {screen number: {"geometry": (x, y, w, h) in physical pixels, "label": str}}.
-        test_mode  : synthetic video/audio sources (tests, --demo).
+        monitors   : {screen number: {"geometry": (x, y, w, h) in physical pixels, "label": str, ...}}.
         on_state   : callback (state, message); states: starting, recording, stopped, error.
         """
         self.settings = settings.copy()
         self.monitors = monitors or {}
-        self.test_mode = test_mode or not system.CAN_CAPTURE
         self.buffer_dir = Path(buffer_dir or default_buffer_dir())
         self.on_state = on_state or (lambda state, msg: None)
-
-        self._proc: subprocess.Popen | None = None
-        self._pump = None                         # AudioPump (tests) or AudioWorker (audio process)
         self._stderr_tail: collections.deque[str] = collections.deque(maxlen=40)
         self._lock = threading.RLock()
-        self._proc_lock = threading.RLock()        # starting / stopping FFmpeg
-        self._save_lock = threading.Lock()
+        self._proc_lock = threading.RLock()        # starting / stopping the capture processes
+        self._save_lock = threading.Lock()         # one clip or recording written at a time
         self._running = False
         self._watchdog: threading.Thread | None = None
-        self._pipe_counter = 0
-        self._generation = 0
-        self.encoder = "libx264"
+        self.encoder = ""
         self.state = "stopped"
-        self.recording_since: float | None = None   # manual recording: not with this engine
         self.started_at = 0.0
         self.tracks: list[dict] = []
         self.screens: list[dict] = []
+        self.recording_since: float | None = None   # manual recording in progress (time.time())
 
     # ------------------------------------------------------------------ state
     def _set_state(self, state: str, message: str = "") -> None:
@@ -145,6 +150,138 @@ class ReplayBuffer:
     @property
     def is_running(self) -> bool:
         return self._running
+
+    @property
+    def is_recording(self) -> bool:
+        return self.recording_since is not None
+
+    # ------------------------------------------------------------ clips
+    @staticmethod
+    def unique_path(dest_dir: Path, stem: str) -> Path:
+        out = dest_dir / f"{stem}.mp4"
+        n = 2
+        while out.exists():
+            out = dest_dir / f"{stem} ({n}).mp4"
+            n += 1
+        return out
+
+    def _new_clip_path(self, dest_dir: Path, name: str | None) -> tuple[Path, datetime]:
+        """Free MP4 path for a new clip in dest_dir (created if needed), and its creation time."""
+        dest_dir = Path(dest_dir)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        created = datetime.now()
+        return self.unique_path(dest_dir, name or f"Snappy {created:%Y-%m-%d %H-%M-%S}"), created
+
+    # ------------------------------------------------------------ manual recording
+    def start_recording(self, dest_dir: Path | None = None) -> None:
+        """Starts recording everything from now on. dest_dir: clips folder, where an engine may
+        keep the recording in progress."""
+        raise RecorderError(tr("Manual recording is not available with this capture engine."))
+
+    def stop_recording(self, dest_dir: Path, name: str | None = None) -> SavedClip:
+        """Stops the manual recording and writes it whole as a clip. Blocking."""
+        raise RecorderError(tr("Manual recording is not available with this capture engine."))
+
+    def _capturing(self) -> bool:
+        """The capture runs and produces video."""
+        return self._running and self.state == "recording"
+
+    def _check_can_start_recording(self) -> bool:
+        """False when a recording is already in progress; raises when the buffer is not ready."""
+        if not self._capturing():
+            raise RecorderError(tr("The buffer is not running."))
+        return self.recording_since is None
+
+
+class SegmentRecording:
+    """Manual recording on the FFmpeg ring: each segment closed from `after` on is appended to
+    `path` (MPEG-TS can be concatenated byte for byte), before the ring reuses its name."""
+
+    POLL_SECONDS = 0.25
+
+    def __init__(self, buffer: ReplayBuffer, path: Path, after: float):
+        self.buffer = buffer
+        self.path = path
+        self.tracks = list(buffer.tracks)          # as recorded: a restart may change them
+        self.screens = list(buffer.screens)
+        self.generation = buffer._generation
+        self.seconds = 0.0
+        self.interrupted = False                   # FFmpeg restarted: the recording stops there
+        self._next = after                         # start of the next segment to append
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._file = open(path, "wb")
+        self._thread = threading.Thread(target=self._loop, name="manual-recording", daemon=True)
+        self._thread.start()
+
+    def _loop(self) -> None:
+        while not self._stop.wait(self.POLL_SECONDS):
+            self.append_new()
+
+    def append_new(self) -> None:
+        with self._lock:
+            if self._file is None or self.interrupted:
+                return
+            if self.buffer._generation != self.generation:
+                # New FFmpeg: timestamps start over, the buffer folder was emptied.
+                self.interrupted = True
+                log.warning("Manual recording cut at %.1f s: the buffer restarted", self.seconds)
+                return
+            for sg in self.buffer.segments():
+                if sg.start < self._next - 0.01:
+                    continue
+                try:
+                    with open(sg.path, "rb") as src:
+                        shutil.copyfileobj(src, self._file, 1024 * 1024)
+                except OSError:
+                    log.warning("Manual recording: segment %s lost", sg.path.name)
+                self._next = sg.end
+                self.seconds += sg.duration
+            self._file.flush()
+
+    def finish(self) -> None:
+        """Appends the last closed segments and closes the file."""
+        self._stop.set()
+        self._thread.join(timeout=5)
+        self.append_new()
+        with self._lock:
+            if self._file:
+                self._file.close()
+                self._file = None
+
+    def discard(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=5)
+        with self._lock:
+            if self._file:
+                self._file.close()
+                self._file = None
+        try:
+            self.path.unlink()
+        except OSError:
+            pass
+
+
+class ReplayBuffer(ReplayEngine):
+    """Manages the FFmpeg process of the buffer and the extraction of the clips."""
+
+    can_record = True     # manual recording from the ring's segments (see the module docstring)
+
+    def __init__(self, settings: Settings,
+                 monitors: dict[int, dict] | None = None,
+                 test_mode: bool = False,
+                 buffer_dir: Path | None = None,
+                 on_state: Callable[[str, str], None] | None = None):
+        """test_mode: synthetic video/audio sources (tests, --demo)."""
+        super().__init__(settings, monitors, buffer_dir, on_state)
+        self.test_mode = test_mode or not system.CAN_CAPTURE
+        self._proc: subprocess.Popen | None = None
+        self._pump = None                         # AudioPump (tests) or AudioWorker (audio process)
+        self._pipe_counter = 0
+        self._generation = 0
+        self._recording: SegmentRecording | None = None
+        self.encoder = "libx264"
 
     # ------------------------------------------------------------- command
     def _screen_list(self) -> list[dict]:
@@ -282,6 +419,7 @@ class ReplayBuffer:
     def stop(self) -> None:
         with self._lock:
             self._running = False
+        self._discard_recording()       # a stopped buffer ends the recording (see Linux)
         self._kill_process()
         if self._watchdog:
             self._watchdog.join(timeout=5)
@@ -514,29 +652,48 @@ class ReplayBuffer:
                 return
             time.sleep(0.05)
 
-    # ------------------------------------------------------------ saving
-    @staticmethod
-    def unique_path(dest_dir: Path, stem: str) -> Path:
-        out = dest_dir / f"{stem}.mp4"
-        n = 2
-        while out.exists():
-            out = dest_dir / f"{stem} ({n}).mp4"
-            n += 1
-        return out
-
-    # Manual recording (start / stop): gpu-screen-recorder engine only (platforms/linux/replay.py).
-    can_record = False
-
-    @property
-    def is_recording(self) -> bool:
-        return False
-
-    def start_recording(self) -> None:
-        raise RecorderError(tr("Manual recording is not available with this capture engine."))
+    # ------------------------------------------------------------ manual recording
+    def start_recording(self, dest_dir: Path | None = None) -> None:
+        with self._save_lock:
+            if not self._check_can_start_recording():
+                return
+            segs = self.segments()
+            if not segs:
+                raise RecorderError(tr("The buffer is still empty, try again in a moment."))
+            # In the clips folder: no copy between disks at the end, even for an hour of video.
+            folder = Path(dest_dir) if dest_dir else self.buffer_dir.parent
+            path = folder / f".recording {datetime.now():%Y-%m-%d %H-%M-%S}.ts.part"
+            # From the segment being written: it holds the moment of the key press.
+            self._recording = SegmentRecording(self, path, after=segs[-1].end)
+            self.recording_since = time.time()
 
     def stop_recording(self, dest_dir: Path, name: str | None = None) -> SavedClip:
-        raise RecorderError(tr("Manual recording is not available with this capture engine."))
+        with self._save_lock:
+            rec, self._recording = self._recording, None
+            self.recording_since = None
+            if rec is None:
+                raise RecorderError(tr("No recording in progress."))
+            try:
+                if self._running and not rec.interrupted:
+                    self._wait_current_segment()
+                rec.finish()
+                if rec.seconds <= 0:
+                    raise RecorderError(tr("The recording is empty."))
+                out, created = self._new_clip_path(dest_dir, name)
+                mix = self.finalize(rec.path, out, None, rec.tracks, rec.screens, timeout=max(120, rec.seconds))
+            finally:
+                rec.discard()
+            return SavedClip(out, ff.probe_duration(out), created, rec.tracks, rec.screens, mix)
 
+    def _discard_recording(self) -> None:
+        with self._save_lock:
+            rec, self._recording = self._recording, None
+            self.recording_since = None
+        if rec:
+            log.warning("Manual recording discarded: the buffer stopped")
+            rec.discard()
+
+    # ------------------------------------------------------------ saving
     def save_clip(self, dest_dir: Path, name: str | None = None,
                   wait_for_current: bool = True) -> SavedClip:
         """Writes the last `clip_seconds` seconds into an MP4. Blocking (~1 s)."""
@@ -553,10 +710,8 @@ class ReplayBuffer:
             if not chosen:
                 raise RecorderError(tr("No usable segment in the buffer."))
 
-            dest_dir = Path(dest_dir)
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            created = datetime.now()
-            out = self.unique_path(dest_dir, name or f"Snappy {created:%Y-%m-%d %H-%M-%S}")
+            out, created = self._new_clip_path(dest_dir, name)
+            dest_dir = out.parent
 
             # 1) Copy the segments right away (FFmpeg could reuse them).
             staged = dest_dir / f".{out.stem}.ts.part"
@@ -575,7 +730,7 @@ class ReplayBuffer:
             return SavedClip(out, ff.probe_duration(out), created, list(self.tracks), list(self.screens), mix)
 
     def finalize(self, staged: Path, out: Path, limit: float | None = None,
-                 tracks: list | None = None, screens: list | None = None) -> bool:
+                 tracks: list | None = None, screens: list | None = None, timeout: float | None = None) -> bool:
         """Concatenated segments -> MP4. Returns True if a "Mix" track was added first."""
         tracks = self.tracks if tracks is None else tracks
         screens = self.screens if screens is None else screens
@@ -590,7 +745,7 @@ class ReplayBuffer:
         cmd += ["-avoid_negative_ts", "make_zero", "-movflags", "+faststart"]
         tmp_out = out.with_suffix(".part.mp4")
         cmd.append(str(tmp_out))
-        ff.run(cmd, timeout=max(120, (limit or 600) * 2))
+        ff.run(cmd, timeout=timeout or max(120, (limit or 600) * 2))
         tmp_out.replace(out)
         return len(tracks) > 1
 

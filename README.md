@@ -77,6 +77,10 @@ launcher starts `python.exe` with a console under Python 3.13.0.
 Requirements: a Wayland or X11 desktop with PipeWire, [gpu-screen-recorder](https://git.dec05eba.com/gpu-screen-recorder)
 (package or Flatpak `com.dec05eba.gpu_screen_recorder`), FFmpeg, Python 3.10+.
 
+Get the sources with `git clone https://github.com/florentin-leclercq/Snappy.git`, or download
+`Snappy-<version>-linux.tar.gz` from the [latest release](https://github.com/florentin-leclercq/Snappy/releases/latest)
+and unpack it (`tar xzf Snappy-*-linux.tar.gz`), then, in that folder:
+
 ```bash
 ./install.sh        # dependencies (installed right away on Arch and derivatives), .venv, applications menu
 snappy              # or ./run.sh from this folder
@@ -127,10 +131,12 @@ Snappy follows the **GitHub releases**, not the latest commit: a version is only
 a release (drafts and pre-releases are left out). `snappy/update.py` holds the rules shared by Windows and Linux;
 only installing `Snappy.exe` belongs to the system layer (`platforms/windows/update.py`):
 
-- **From the sources** (git clone: `run.sh`, `snappy`, `run.bat`): before starting, the launcher runs
-  `python -m snappy.update`, which moves the clone to the tag of the latest release (fast-forward; commits of your
-  own are replayed on top of it) and installs the new Python dependencies. A clone already at that release or ahead
-  of it (development) is left alone.
+- **From the sources** (`run.sh`, `snappy`, `run.bat`): before starting, the launcher runs `python -m snappy.update`.
+  A **git clone** moves to the tag of the latest release (fast-forward; commits of your own are replayed on top of
+  it); a clone already at that release or ahead of it (development) is left alone. Sources unpacked from the
+  **Linux release archive** are replaced by the new `Snappy-<version>-linux.tar.gz` (SHA-256 checked): each entry of
+  the archive replaces the old one (the `snappy` package as a whole), `.venv`, `ffmpeg` and files of your own stay,
+  and the previous version is put back if something fails. Either way, the new Python dependencies are installed.
 - **`Snappy.exe`** (Windows): a little after starting, then every 6 hours, Snappy downloads the release's
   `Snappy-<version>-windows.zip` in the background, checks its SHA-256, and unpacks it into
   `%LOCALAPPDATA%\Snappy\update`. It is installed when Snappy restarts: "Restart to update" in the notification
@@ -159,9 +165,10 @@ git commit -am "Version 0.2.0"
 git tag v0.2.0 && git push origin main v0.2.0
 ```
 
-The **Release** workflow (`.github/workflows/release.yml`, GitHub Actions on Windows) then checks that the tag matches
-the version in the code, runs `build.ps1`, the update and translation tests, and publishes the GitHub release with
-`Snappy-<version>-windows.zip` attached and notes generated from the commits. A tag with a suffix (`v0.3.0-beta`)
+The **Release** workflow (`.github/workflows/release.yml`, GitHub Actions) then checks that the tag matches the version
+in the code, builds `Snappy-<version>-windows.zip` on Windows (`build.ps1`) and `Snappy-<version>-linux.tar.gz` on
+Linux (the sources at the tag, scripts executable), runs the update and translation tests on both, and publishes the
+GitHub release with both archives attached and notes generated from the commits. A tag with a suffix (`v0.3.0-beta`)
 makes a pre-release, which the updates leave out. If the workflow fails, fix, then move the tag
 (`git tag -f v0.2.0 && git push -f origin v0.2.0`): it runs again.
 
@@ -219,7 +226,7 @@ The code follows an MVC architecture, and everything that depends on the operati
 snappy/
   app.py              entry point: log, single instance, creation of the main controller
   i18n.py             interface language: tr() and the French catalog (locales/fr.py)
-  update.py           updates from the GitHub releases: git clone, download of a packaged Snappy
+  update.py           updates from the GitHub releases: git clone, Linux release archive, packaged Snappy
   models/             data (no UI)
     settings.py       settings (settings.json) and tracks to record
     library.py        clip index, thumbnails, previews, trash, quota
@@ -257,7 +264,7 @@ snappy/
     generic.py        neutral fallback for other systems (starting point of a port)
   locales/            interface translations (fr.py: English text -> French text)
 tests/                tests (python -m unittest discover tests)
-.github/workflows/    release.yml: GitHub release built and published when a v* tag is pushed
+.github/workflows/    release.yml: GitHub release (Windows zip, Linux archive) published when a v* tag is pushed
 ```
 
 Porting Snappy to another system means writing a `platforms/<system>/` module that offers the same functions as

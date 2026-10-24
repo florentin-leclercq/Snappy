@@ -8,12 +8,11 @@ module would replace these fallbacks.
 
 from __future__ import annotations
 
+import functools
 import os
 import subprocess
 import sys
 from pathlib import Path
-
-from PySide6.QtCore import QObject, Signal
 
 from ..i18n import tr
 
@@ -150,6 +149,8 @@ def show_overlay_toast(title: str, subtitle: str, ok: bool = True, ms: int = 350
 # A packaged Snappy (not a git clone) that installs its own updates: the release asset it downloads.
 SELF_UPDATE = False
 UPDATE_ASSET = ""      # regular expression on the asset name
+# Sources installed from a release archive (not a git clone): the asset that replaces them.
+SOURCE_ASSET = ""
 
 
 def long_path(path: Path) -> str:
@@ -197,17 +198,30 @@ def parse_hotkey(text: str) -> tuple[int, int]:
     return 0, 0
 
 
-class GlobalHotkeys(QObject):
-    triggered = Signal(str)
+def __getattr__(name: str):
+    # Qt class: built on demand (the update step of the launchers and the audio process run without Qt).
+    if name == "GlobalHotkeys":
+        return _global_hotkeys()
+    raise AttributeError(name)
 
-    def register(self, name: str, text: str) -> None:
-        parse_hotkey(text)
 
-    def unregister(self, name: str) -> None:
-        pass
+@functools.cache
+def _global_hotkeys():
+    from PySide6.QtCore import QObject, Signal
 
-    def unregister_all(self) -> None:
-        pass
+    class GlobalHotkeys(QObject):
+        triggered = Signal(str)
+
+        def register(self, name: str, text: str) -> None:
+            parse_hotkey(text)
+
+        def unregister(self, name: str) -> None:
+            pass
+
+        def unregister_all(self) -> None:
+            pass
+
+    return GlobalHotkeys
 
 
 # --------------------------------------------------------------------------

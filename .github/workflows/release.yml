@@ -1,7 +1,8 @@
 # Publishes a GitHub release when a version tag is pushed:
 #   git tag v0.2.0 && git push origin main v0.2.0
-# Builds Snappy.exe (build.ps1) and attaches Snappy-<version>-windows.zip, the archive Snappy.exe
-# updates itself from; git clones (Linux, run.bat) move to the tag (snappy/update.py).
+# Assets, which Snappy updates itself from (snappy/update.py):
+#   Snappy-<version>-windows.zip    Snappy.exe (build.ps1)
+#   Snappy-<version>-linux.tar.gz   the sources, to install with ./install.sh
 # A tag with a suffix (v0.3.0-beta) makes a pre-release: the updates leave it out.
 name: Release
 
@@ -10,63 +11,108 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write          # create the release and upload its asset
+  contents: write          # create the release and upload its assets
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  SNAPPY_LANG: en
+
 jobs:
-  release:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag against the version in the code
+        id: check
+        run: |
+          version=$(python3 -c "import re; print(re.search(r'__version__ = \"([^\"]+)\"', open('snappy/__init__.py').read()).group(1))")
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "$tag" =~ ^v${version//./\\.}(-.+)?$ ]]; then
+            echo "::error::Tag $tag does not match the version in snappy/__init__.py ($version): set the version (scripts/set_version), commit, then tag."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: version
     runs-on: windows-latest
     timeout-minutes: 45
     env:
       QT_QPA_PLATFORM: offscreen    # the icon is drawn with Qt, without a display
-      SNAPPY_LANG: en
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Check the tag against the version in the code
-        shell: pwsh
-        run: |
-          $tag = "${{ github.ref_name }}"
-          $version = (python -c "import snappy; print(snappy.__version__)").Trim()
-          if ($tag -notmatch "^v$([regex]::Escape($version))(-.+)?$") {
-            throw "Tag $tag does not match the version in snappy/__init__.py ($version): set the version, commit, then tag."
-          }
-          "VERSION=$version" >> $env:GITHUB_ENV
-
       - name: Python environment
         shell: pwsh
         run: python -m venv .venv
-
       - name: Build Snappy.exe and the release zip
         shell: pwsh
         run: ./build.ps1
-
       - name: Tests (no screen or sound card needed)
         shell: pwsh
         run: .\.venv\Scripts\python.exe -m unittest tests.test_i18n tests.test_update -v
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/Snappy-${{ needs.version.outputs.version }}-windows.zip
+          if-no-files-found: error
 
+  linux:
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tests (no screen or sound card needed)
+        run: |
+          python -m pip install --quiet -r requirements.txt
+          python -m unittest tests.test_i18n tests.test_update -v
+      - name: Source archive
+        run: |
+          v="${{ needs.version.outputs.version }}"
+          mkdir -p dist
+          # The tracked files at the tag, in a Snappy-<version>/ folder; the scripts stay executable.
+          git archive --format=tar.gz --prefix="Snappy-$v/" -o "dist/Snappy-$v-linux.tar.gz" HEAD
+          tar -tzvf "dist/Snappy-$v-linux.tar.gz" | grep -E "install.sh|run.sh"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/Snappy-${{ needs.version.outputs.version }}-linux.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: [version, windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
       - name: Publish the release
-        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
-          $tag = "${{ github.ref_name }}"
-          $zip = "dist/Snappy-$env:VERSION-windows.zip"
-          if (-not (Test-Path $zip)) { throw "$zip was not built" }
-          $flags = @()
-          if ($tag -match "-") { $flags += "--prerelease" }
-          gh release view $tag 2>$null | Out-Null
-          if ($LASTEXITCODE -eq 0) {
-            # Tag pushed again (failed run started anew): replace the asset.
-            gh release upload $tag $zip --clobber
-          } else {
-            gh release create $tag $zip --title "Snappy $env:VERSION" --generate-notes --verify-tag @flags
-          }
-          if ($LASTEXITCODE -ne 0) { throw "gh release failed ($LASTEXITCODE)" }
+          tag="${GITHUB_REF_NAME}"
+          v="${{ needs.version.outputs.version }}"
+          assets=("dist/Snappy-$v-windows.zip" "dist/Snappy-$v-linux.tar.gz")
+          ls -l "${assets[@]}"
+          if gh release view "$tag" --repo "$REPO" > /dev/null 2>&1; then
+            # Tag pushed again (failed run started anew): replace the assets.
+            gh release upload "$tag" "${assets[@]}" --clobber --repo "$REPO"
+          else
+            flags=()
+            [[ "$tag" == *-* ]] && flags+=(--prerelease)
+            gh release create "$tag" "${assets[@]}" --repo "$REPO" --title "Snappy $v" \
+              --generate-notes --verify-tag "${flags[@]}"
+          fi

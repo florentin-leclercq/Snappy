@@ -16,6 +16,8 @@ from .process import NO_WINDOW
 # Snappy.exe updates itself from the release's Windows zip (made by build.ps1).
 SELF_UPDATE = True
 UPDATE_ASSET = r"windows.*\.zip$"
+# The sources (run.bat) are updated from a git clone only.
+SOURCE_ASSET = ""
 
 # Waits for Snappy to quit, swaps the folders (old one back if the copy fails), restarts Snappy.
 APPLY_SCRIPT = r"""param([int]$WaitPid, [string]$Source, [string]$Target, [string]$Staging, [string]$Log,

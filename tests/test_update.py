@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import time
@@ -228,6 +229,90 @@ class TestSourceUpdate(unittest.TestCase):
         with unittest.mock.patch.dict(os.environ, {"SNAPPY_NO_UPDATE": "1"}):
             self.assertEqual(update.update_source(self.user, update.Release("v1.1.0")), "disabled")
         self.assertEqual(update.update_source(self.tmp, update.Release("v1.1.0")), "not a git clone")
+
+
+class TestArchiveUpdate(unittest.TestCase):
+    """Sources installed from the release archive (Linux, not a git clone): replaced by the new
+    archive, .venv and files of your own kept, the previous version back if something fails."""
+
+    PATTERN = r"linux.*\.tar\.gz$"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.patches = [unittest.mock.patch.dict(os.environ, {"XDG_CACHE_HOME": str(self.tmp / "cache"),
+                                                              "LOCALAPPDATA": str(self.tmp / "cache"),
+                                                              "SNAPPY_NO_UPDATE": ""}),
+                        unittest.mock.patch.object(update.system, "SOURCE_ASSET", self.PATTERN),
+                        unittest.mock.patch.object(update, "_running_from", return_value=False)]
+        for p in self.patches:
+            p.start()
+        self.gh = FakeGitHub({})
+        self.root = self.tmp / "Snappy"
+        self.write_tree(self.root, "1.0.0", {"snappy/old_module.py": "old", "requirements.txt": "numpy\n",
+                                             "run.sh": "#!/bin/sh\necho old\n"})
+        (self.root / ".venv").mkdir()
+        (self.root / ".venv" / "keep").write_text("venv")
+        (self.root / "mine.txt").write_text("my notes")
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        self.gh.close()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    @staticmethod
+    def write_tree(root: Path, version: str, files: dict) -> None:
+        (root / "snappy").mkdir(parents=True, exist_ok=True)
+        (root / "snappy" / "__init__.py").write_text(f'"""Snappy."""\n__version__ = "{version}"\n')
+        for name, text in files.items():
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
+            (root / name).write_text(text)
+
+    def release(self, version: str, files: dict, with_asset: bool = True) -> update.Release:
+        src = self.tmp / f"build-{version}" / f"Snappy-{version}"
+        self.write_tree(src, version, {"run.sh": "#!/bin/sh\n", **files})
+        (src / "run.sh").chmod(0o755)
+        archive = self.tmp / f"Snappy-{version}-linux.tar.gz"
+        with tarfile.open(archive, "w:gz") as tar:
+            tar.add(src, arcname=src.name)
+        data = archive.read_bytes()
+        self.gh.routes[f"/{archive.name}"] = (200, data)
+        assets = [{"name": archive.name, "url": f"{self.gh.url}/{archive.name}", "size": len(data),
+                   "sha256": hashlib.sha256(data).hexdigest()}] if with_asset else []
+        return update.Release(f"v{version}", assets=assets)
+
+    def test_archive_replaces_the_sources(self):
+        rel = self.release("1.1.0", {"snappy/new_module.py": "new", "requirements.txt": "numpy\n",
+                                     "run.sh": "#!/bin/sh\necho new\n"})
+        self.assertEqual(update.update_source(self.root, rel), "updated")
+        self.assertEqual(update.installed_version(self.root), "1.1.0")
+        self.assertTrue((self.root / "snappy" / "new_module.py").exists())
+        self.assertFalse((self.root / "snappy" / "old_module.py").exists())      # the package replaced whole
+        self.assertEqual((self.root / ".venv" / "keep").read_text(), "venv")      # kept
+        self.assertEqual((self.root / "mine.txt").read_text(), "my notes")
+        self.assertIn("echo new", (self.root / "run.sh").read_text())
+        if sys.platform != "win32":
+            self.assertTrue(os.access(self.root / "run.sh", os.X_OK))
+        self.assertFalse((self.root / ".update-backup").exists())
+        self.assertEqual(update.update_source(self.root, rel), "up to date")
+
+    def test_failed_dependencies_put_the_old_version_back(self):
+        rel = self.release("1.2.0", {"snappy/new_module.py": "new",
+                                     "requirements.txt": "./this-project-does-not-exist\n"})
+        with unittest.mock.patch.object(update, "_venv_python", return_value=Path(sys.executable)):
+            self.assertEqual(update.update_source(self.root, rel), "dependencies")
+        self.assertEqual(update.installed_version(self.root), "1.0.0")
+        self.assertTrue((self.root / "snappy" / "old_module.py").exists())
+        self.assertFalse((self.root / "snappy" / "new_module.py").exists())
+        self.assertEqual((self.root / "requirements.txt").read_text(), "numpy\n")
+        self.assertEqual((self.root / ".venv" / "keep").read_text(), "venv")
+        self.assertFalse((self.root / ".update-backup").exists())
+
+    def test_without_archive_or_without_support(self):
+        self.assertEqual(update.update_source(self.root, self.release("1.3.0", {}, with_asset=False)), "no archive")
+        self.assertEqual(update.installed_version(self.root), "1.0.0")
+        with unittest.mock.patch.object(update.system, "SOURCE_ASSET", ""):       # Windows: git clones only
+            self.assertEqual(update.update_source(self.root, self.release("1.3.0", {})), "not a git clone")
 
 
 class TestSelfUpdate(unittest.TestCase):

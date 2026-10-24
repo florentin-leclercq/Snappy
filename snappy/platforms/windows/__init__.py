@@ -10,7 +10,7 @@ from .system import (CHAT_APPS, MANUAL_RECORDING, NAME, OVERLAY_TOAST, TEXT, acc
                      data_dir,
                      enable_dpi_awareness, foreground_app_info, open_folder, play_wav, reveal, send_to_recycle_bin,
                      set_app_id, set_autostart, steam_dirs, steam_value, system_sounds, videos_dir)
-from .update import SELF_UPDATE, UPDATE_ASSET, install_update, long_path
+from .update import SELF_UPDATE, SOURCE_ASSET, UPDATE_ASSET, install_update, long_path
 
 
 def parse_hotkey(text: str) -> tuple[int, int]:
@@ -76,5 +76,5 @@ __all__ = [
     "video_prefilter", "audio_pipe_name", "open_audio_pipe", "make_capture_source", "capture_plan",
     "list_microphones", "audio_apps", "prepare_audio_process", "TEXT", "CHAT_APPS", "OVERLAY_TOAST", "MANUAL_RECORDING", "show_overlay_toast",
     "system_sounds", "ENCODER_VENDORS", "ENCODER_CHOICES", "render_node", "replay_buffer_class",
-    "SELF_UPDATE", "UPDATE_ASSET", "install_update", "long_path",
+    "SELF_UPDATE", "UPDATE_ASSET", "install_update", "long_path", "SOURCE_ASSET",
 ]

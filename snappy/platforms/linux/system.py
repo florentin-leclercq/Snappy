@@ -20,6 +20,8 @@ from ... import APP_NAME, SOURCE_ROOT
 from ...i18n import tr
 
 NAME = "linux"
+# Sources installed from the release archive (not a git clone) are updated from it (update.py).
+SOURCE_ASSET = r"linux.*\.tar\.gz$"
 TEXT = {
     "os": "Linux",
     "session_start": tr("at login"),

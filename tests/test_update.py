@@ -70,6 +70,29 @@ class TestVersions(unittest.TestCase):
         self.assertFalse(update.is_newer("v0.9", "1.0"))
         self.assertFalse(update.is_newer("nightly", "1.0"))
 
+    def test_set_version_script(self):
+        """scripts/set_version.py: both files changed, line endings kept, only the version line."""
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import set_version
+
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            (tmp / "snappy").mkdir()
+            (tmp / "snappy" / "__init__.py").write_bytes(b'"""Doc."""\r\n__version__ = "0.1.0"\r\nAPP_NAME = "Snappy"\r\n')
+            (tmp / "pyproject.toml").write_bytes(b'[project]\nversion = "0.1.0"\n[tool.x]\nversion = "9"\n')
+            self.assertEqual(set_version.current(tmp), "0.1.0")
+            self.assertEqual(set_version.next_patch("0.1.9"), "0.1.10")
+            self.assertEqual(set_version.apply("0.2.0", tmp), ["snappy/__init__.py", "pyproject.toml"])
+            self.assertEqual((tmp / "snappy" / "__init__.py").read_bytes(),
+                             b'"""Doc."""\r\n__version__ = "0.2.0"\r\nAPP_NAME = "Snappy"\r\n')
+            self.assertEqual((tmp / "pyproject.toml").read_bytes(), b'[project]\nversion = "0.2.0"\n[tool.x]\nversion = "9"\n')
+            self.assertEqual(set_version.apply("0.2.0", tmp), [])
+            for bad in ("0.2", "v0.2.0", "0.2.0-beta", ""):
+                with self.assertRaises(ValueError):
+                    set_version.apply(bad, tmp)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_package_and_pyproject_agree(self):
         text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         self.assertEqual(re.search(r'^version = "([^"]+)"', text, re.M).group(1), __version__)

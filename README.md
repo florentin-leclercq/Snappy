@@ -141,9 +141,17 @@ a conflict or a failed dependency install, and the current version runs as it is
 another repository (`owner/name`).
 
 **Publishing a version**: set the version in `snappy/__init__.py` and `pyproject.toml` (a test checks that they
-agree), commit, then push a `v<version>` tag:
+agree) with the script, which asks for it (Enter: next patch version) or takes it as argument:
 
 ```bash
+scripts/set_version.sh                                                # Linux
+powershell -ExecutionPolicy Bypass -File scripts\set_version.ps1      # Windows
+```
+
+then commit and push a `v<version>` tag:
+
+```bash
+git commit -am "Version 0.2.0"
 git tag v0.2.0 && git push origin main v0.2.0
 ```
 

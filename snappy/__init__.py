@@ -11,7 +11,7 @@ Layout (MVC):
 
 from pathlib import Path
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 APP_NAME = "Snappy"
 # Folder that contains the package (sources): bundled FFmpeg, launch at login.
 SOURCE_ROOT = Path(__file__).resolve().parent.parent

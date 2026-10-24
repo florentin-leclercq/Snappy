@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 from ... import SOURCE_ROOT
@@ -192,22 +193,34 @@ def send_to_recycle_bin(paths: list[Path]) -> bool:
 # --------------------------------------------------------------------------
 # Start at login
 # --------------------------------------------------------------------------
+def launch_command(args: list[str]) -> list[str]:
+    """Command that starts Snappy with `args` without a console window (start at login, run.bat).
+
+    Snappy.exe: itself. From the sources: the pythonw.exe of the base Python, with the venv's
+    packages in front of the path, and not the venv's pythonw.exe: the venv launcher of Python
+    3.13.0 starts python.exe instead, with a console window, and the audio process (started with
+    the same interpreter) would open one too. The source folder is put in the path as well: at
+    login the current folder is System32, where "-m snappy" would not find the package."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, *args]
+    base = Path(getattr(sys, "_base_executable", "") or sys.executable)
+    pyw = base.with_name("pythonw.exe")
+    if not pyw.exists():
+        pyw = Path(sys.executable).with_name("pythonw.exe")
+    sites = [sysconfig.get_path("purelib")] if sys.prefix != sys.base_prefix else []
+    code = (f"import site, sys; [site.addsitedir(p) for p in {sites!r}]; "    # packages and their .pth files
+            f"sys.path[0:0] = {[str(SOURCE_ROOT), *sites]!r}; "               # before the base Python's own
+            "from snappy.app import main; sys.exit(main())")
+    return [str(pyw if pyw.exists() else sys.executable), "-s", "-c", code, *args]
+
+
 def set_autostart(enabled: bool, minimized: bool = True) -> None:
     """Adds/removes Snappy from startup (HKCU\\...\\Run). `minimized`: started at login, it stays
     in the notification area; started by hand, it always opens its window."""
     import winreg
 
     key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-    if getattr(sys, "frozen", False):
-        command = f'"{sys.executable}"'
-    else:
-        # At login the current folder is System32, where "-m snappy" cannot find the package:
-        # the source folder is added to the path before starting the app.
-        pyw = Path(sys.executable).with_name("pythonw.exe")
-        code = f"import sys; sys.path.insert(0, r'{SOURCE_ROOT}'); from snappy.app import main; sys.exit(main())"
-        command = f'"{pyw if pyw.exists() else sys.executable}" -c "{code}"'
-    if minimized:
-        command += " --minimized"
+    command = subprocess.list2cmdline(launch_command(["--minimized"] if minimized else []))
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
         if enabled:
             winreg.SetValueEx(key, "Snappy", 0, winreg.REG_SZ, command)

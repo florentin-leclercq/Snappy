@@ -76,6 +76,29 @@ class TestHotkey(unittest.TestCase):
                 parse_hotkey(bad)
 
 
+@unittest.skipUnless(sys.platform == "win32", "Windows start command")
+class TestWindowsLaunch(unittest.TestCase):
+    """Start at login and run.bat: the base Python's pythonw.exe (never a console), with the venv's
+    packages and the source folder in front of the path, from any current folder."""
+
+    def test_command_without_console(self):
+        import subprocess
+        from snappy import SOURCE_ROOT
+        from snappy.platforms.windows.system import launch_command
+
+        cmd = launch_command(["--minimized"])
+        self.assertEqual(Path(cmd[0]).name.lower(), "pythonw.exe")
+        self.assertNotEqual(Path(cmd[0]).parent, Path(sys.executable).parent)   # not the venv launcher
+        self.assertEqual((cmd[1], cmd[2], cmd[-1]), ("-s", "-c", "--minimized"))
+        # Same bootstrap, run with the console python.exe next to it: Snappy and its packages are found.
+        probe = cmd[3].replace("from snappy.app import main; sys.exit(main())",
+                               "import snappy, PySide6, numpy; print(snappy.__file__)")
+        out = subprocess.run([str(Path(cmd[0]).with_name("python.exe")), "-s", "-c", probe], capture_output=True,
+                             text=True, cwd=os.environ.get("SystemRoot", r"C:\Windows"), timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(Path(out.stdout.strip()), SOURCE_ROOT / "snappy" / "__init__.py")
+
+
 class TestSettings(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()

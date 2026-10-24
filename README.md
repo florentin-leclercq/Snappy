@@ -68,6 +68,10 @@ powershell -ExecutionPolicy Bypass -File scripts\get_ffmpeg.ps1   # FFmpeg >= 6 
 
 `--minimized` option: start directly in the notification area. `--demo` option: replaces the screen with test patterns and the sound with beeps (useful to develop without a game).
 
+`run.bat` and the start at login run Snappy without a console window: with the `pythonw.exe` of the base Python and
+the venv's packages in front of the path (`platforms/windows/launch.py`), not with the venv's `pythonw.exe`, whose
+launcher starts `python.exe` with a console under Python 3.13.0.
+
 ## Linux
 
 Requirements: a Wayland or X11 desktop with PipeWire, [gpu-screen-recorder](https://git.dec05eba.com/gpu-screen-recorder)

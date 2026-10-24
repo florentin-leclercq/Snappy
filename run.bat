@@ -1,11 +1,12 @@
 @echo off
 rem Runs Snappy from the sources (after installing: see README.md)
 cd /d "%~dp0"
-rem Update to the latest GitHub release before starting (snappy/update.py).
-if exist .venv\Scripts\pythonw.exe (
+rem Update to the latest GitHub release, then start Snappy without a console window
+rem (snappy/update.py, snappy/platforms/windows/launch.py).
+if exist .venv\Scripts\python.exe (
     .venv\Scripts\python.exe -m snappy.update
-    start "" .venv\Scripts\pythonw.exe -m snappy %*
+    .venv\Scripts\python.exe -m snappy.platforms.windows.launch %*
 ) else (
     py -3 -m snappy.update
-    py -3 -m snappy %*
+    py -3 -m snappy.platforms.windows.launch %*
 )

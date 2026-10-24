@@ -141,8 +141,17 @@ a conflict or a failed dependency install, and the current version runs as it is
 another repository (`owner/name`).
 
 **Publishing a version**: set the version in `snappy/__init__.py` and `pyproject.toml` (a test checks that they
-agree), commit, tag it `v<version>` (`git tag v0.2.0 && git push origin main v0.2.0`), run `build.ps1`, then create
-the GitHub release on that tag with `dist\Snappy-<version>-windows.zip` attached.
+agree), commit, then push a `v<version>` tag:
+
+```bash
+git tag v0.2.0 && git push origin main v0.2.0
+```
+
+The **Release** workflow (`.github/workflows/release.yml`, GitHub Actions on Windows) then checks that the tag matches
+the version in the code, runs `build.ps1`, the update and translation tests, and publishes the GitHub release with
+`Snappy-<version>-windows.zip` attached and notes generated from the commits. A tag with a suffix (`v0.3.0-beta`)
+makes a pre-release, which the updates leave out. If the workflow fails, fix, then move the tag
+(`git tag -f v0.2.0 && git push -f origin v0.2.0`): it runs again.
 
 ## Shortcuts
 
@@ -236,6 +245,7 @@ snappy/
     generic.py        neutral fallback for other systems (starting point of a port)
   locales/            interface translations (fr.py: English text -> French text)
 tests/                tests (python -m unittest discover tests)
+.github/workflows/    release.yml: GitHub release built and published when a v* tag is pushed
 ```
 
 Porting Snappy to another system means writing a `platforms/<system>/` module that offers the same functions as

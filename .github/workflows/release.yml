@@ -1,0 +1,72 @@
+# Publishes a GitHub release when a version tag is pushed:
+#   git tag v0.2.0 && git push origin main v0.2.0
+# Builds Snappy.exe (build.ps1) and attaches Snappy-<version>-windows.zip, the archive Snappy.exe
+# updates itself from; git clones (Linux, run.bat) move to the tag (snappy/update.py).
+# A tag with a suffix (v0.3.0-beta) makes a pre-release: the updates leave it out.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write          # create the release and upload its asset
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      QT_QPA_PLATFORM: offscreen    # the icon is drawn with Qt, without a display
+      SNAPPY_LANG: en
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check the tag against the version in the code
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = (python -c "import snappy; print(snappy.__version__)").Trim()
+          if ($tag -notmatch "^v$([regex]::Escape($version))(-.+)?$") {
+            throw "Tag $tag does not match the version in snappy/__init__.py ($version): set the version, commit, then tag."
+          }
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Python environment
+        shell: pwsh
+        run: python -m venv .venv
+
+      - name: Build Snappy.exe and the release zip
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Tests (no screen or sound card needed)
+        shell: pwsh
+        run: .\.venv\Scripts\python.exe -m unittest tests.test_i18n tests.test_update -v
+
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $zip = "dist/Snappy-$env:VERSION-windows.zip"
+          if (-not (Test-Path $zip)) { throw "$zip was not built" }
+          $flags = @()
+          if ($tag -match "-") { $flags += "--prerelease" }
+          gh release view $tag 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            # Tag pushed again (failed run started anew): replace the asset.
+            gh release upload $tag $zip --clobber
+          } else {
+            gh release create $tag $zip --title "Snappy $env:VERSION" --generate-notes --verify-tag @flags
+          }
+          if ($LASTEXITCODE -ne 0) { throw "gh release failed ($LASTEXITCODE)" }

@@ -583,6 +583,7 @@ STRINGS: dict[str, str] = {
     "Could not start the recording: {error}": "Impossible de démarrer l'enregistrement : {error}",
     "No recording in progress.": "Aucun enregistrement en cours.",
     "The recording is empty.": "L'enregistrement est vide.",
+    "Version {version}": "Version {version}",
     "Restart to update (version {version})": "Redémarrer pour mettre à jour (version {version})",
     "Snappy was updated to version {version}.": "Snappy a été mis à jour (version {version}).",
     "Snappy {version} is ready: it is installed when Snappy restarts.":

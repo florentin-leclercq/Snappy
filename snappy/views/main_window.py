@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QCalendarWidget, Q
                                QPushButton, QScrollArea, QSlider, QStackedWidget, QSystemTrayIcon, QToolButton,
                                QVBoxLayout, QWidget, QWidgetAction)
 
+from .. import __version__
 from ..i18n import tr
 from ..models import games
 from ..models.settings import Settings
@@ -148,7 +149,7 @@ class MainWindow(QMainWindow):
         self.editor.trashRequested.connect(lambda c: self.trash([c]))
         self.editor.message.connect(lambda m: self.toast.show_message(m))
         self.stack.addWidget(self.editor)
-        self.settings_page = SettingsPage(settings, settings_options)
+        self.settings_page = self._new_settings_page()
         self.stack.addWidget(self.settings_page)
         self.splitter.addWidget(self.stack)
         self.splitter.setStretchFactor(1, 1)
@@ -246,6 +247,11 @@ class MainWindow(QMainWindow):
         self.nav_group.addButton(self.nav_settings)
         self.nav_settings.clicked.connect(self.show_settings)
         v.addWidget(self.nav_settings)
+        self.version_lbl = QLabel(tr("Version {version}", version=__version__))
+        self.version_lbl.setObjectName("faint")
+        self.version_lbl.setContentsMargins(24, 4, 0, 0)
+        self.version_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        v.addWidget(self.version_lbl)
         return side
 
     def _rebuild_groups(self) -> None:
@@ -709,11 +715,16 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(PAGE_SETTINGS)
 
     # ------------------------------------------------------------ settings not applied
+    def _new_settings_page(self) -> SettingsPage:
+        page = SettingsPage(self.settings, self.settings_options)
+        page.cancelRequested.connect(self.cancel_settings)
+        return page
+
     def cancel_settings(self) -> None:
         """Cancel: the page is rebuilt from the saved settings."""
         old = self.settings_page
         scroll = old._scroll.verticalScrollBar().value()
-        self.settings_page = SettingsPage(self.settings, self.settings_options)
+        self.settings_page = self._new_settings_page()
         self.settingsPageCreated.emit(self.settings_page)
         self.stack.insertWidget(PAGE_SETTINGS, self.settings_page)
         if self.stack.currentWidget() is old:

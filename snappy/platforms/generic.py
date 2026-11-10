@@ -137,6 +137,11 @@ def play_wav(path: Path) -> None:
     pass
 
 
+def session_locked() -> bool:
+    """The lock screen (or another secure desktop) is in front: the screen capture cannot see it."""
+    return False
+
+
 def show_overlay_toast(title: str, subtitle: str, ok: bool = True, ms: int = 3500,
                        monitor: str = "", thumb: str = "") -> bool:
     """Toast over the game where OVERLAY_TOAST is False (Wayland); False: not possible here."""

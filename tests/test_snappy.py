@@ -339,6 +339,55 @@ class TestReplayBuffer(unittest.TestCase):
         self.assertTrue(saved.mix_track)
         self.assertEqual(sorted(p.name for p in clips.iterdir()), ["manual.mp4", "replay.mp4"])
 
+    def test_frozen_capture_restarts_ffmpeg(self):
+        """FFmpeg alive but no new segment (screen capture frozen after the lock screen): restarted,
+        without counting a failure (no fallback), and the buffer records again."""
+        import psutil
+
+        rb = self.start_buffer(5, audio=False)
+        rb.FROZEN_TIMEOUT = 3.0
+        try:
+            time.sleep(2)
+            frozen = rb._proc
+            first_generation = rb._generation
+            psutil.Process(frozen.pid).suspend()         # still running, no segment any more
+            deadline = time.time() + 30
+            while time.time() < deadline and rb._generation == first_generation:
+                time.sleep(0.2)
+            self.assertGreater(rb._generation, first_generation)
+            self.assertIsNotNone(frozen.poll())          # the frozen FFmpeg was stopped
+            deadline = time.time() + 20
+            while time.time() < deadline and not (rb.state == "recording" and rb._last_segment_age() < 2):
+                time.sleep(0.2)
+            self.assertEqual(rb.state, "recording")
+            self.assertEqual(rb.settings.capture_method, Settings().capture_method)   # no fallback
+            self.assertEqual(rb.encoder, "libx264")
+            clip = rb.save_clip(self.tmp / "clips")
+            self.assertGreater(clip.duration, 0.5)
+        finally:
+            rb.stop()
+
+    def test_waits_for_the_unlock(self):
+        """Started behind the lock screen (Windows start): the buffer waits for the unlock instead
+        of capturing the lock screen, then records."""
+        locked = {"until": time.time() + 2.5}
+        states = []
+        s = Settings()
+        s.clip_seconds, s.fps, s.output_height, s.capture_system_audio = 5, 30, 0, False
+        rb = ReplayBuffer(s, test_mode=True, buffer_dir=self.tmp / "buf", on_state=lambda st, m: states.append((st, m)))
+        rb._locked = lambda: time.time() < locked["until"]
+        rb.start()
+        try:
+            time.sleep(1.5)
+            self.assertIsNone(rb._proc)                  # nothing captured while locked
+            self.assertIn("unlocked", states[-1][1])
+            deadline = time.time() + 20
+            while rb.state != "recording" and time.time() < deadline:
+                time.sleep(0.1)
+            self.assertEqual(rb.state, "recording")
+        finally:
+            rb.stop()
+
     def test_restart_leaves_a_single_ffmpeg(self):
         import psutil
 

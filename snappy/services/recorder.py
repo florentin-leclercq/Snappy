@@ -537,6 +537,11 @@ class ReplayBuffer(ReplayEngine):
     # Without a segment after this delay, FFmpeg runs but produces nothing usable (an encoder that
     # ignores the forced keyframes...): it is treated as a failure.
     FIRST_SEGMENT_TIMEOUT = 15.0
+    # Once recording, without a new segment for this long the screen capture is frozen: FFmpeg
+    # still runs and writes the sound, but Desktop Duplication delivers no image any more (seen
+    # after the lock screen of the Windows start). The buffer would keep its last images (that
+    # lock screen) for hours: FFmpeg is restarted, which is not counted as a failure.
+    FROZEN_TIMEOUT = 10.0
 
     def _watch(self) -> None:
         """Starts FFmpeg and restarts it if it stops unexpectedly."""
@@ -546,9 +551,32 @@ class ReplayBuffer(ReplayEngine):
             if not self._running:     # never leave FFmpeg behind a stopped buffer
                 self._kill_process()
 
+    def _last_segment_age(self) -> float:
+        """Seconds since FFmpeg closed a segment (the list is rewritten at each one)."""
+        try:
+            return time.time() - (self.buffer_dir / LIST_NAME).stat().st_mtime
+        except OSError:
+            return 0.0
+
+    def _locked(self) -> bool:
+        return not self.test_mode and system.session_locked()
+
+    def _wait_unlocked(self) -> None:
+        """The capture cannot see the secure desktop (lock screen at the Windows start, UAC prompt):
+        it starts once the user's desktop is back, instead of failing or freezing on it."""
+        if not self._locked():
+            return
+        log.info("Session locked: the buffer starts once it is unlocked")
+        self._set_state("starting", tr("Screen locked: the buffer starts once it is unlocked…"))
+        while self._running and self._locked():
+            time.sleep(1.0)
+
     def _watch_loop(self) -> None:
         failures = 0
         while self._running:
+            self._wait_unlocked()
+            if not self._running:
+                return
             try:
                 self._spawn()
             except Exception as exc:
@@ -557,18 +585,31 @@ class ReplayBuffer(ReplayEngine):
                 return
             announced = False
             stalled = False
+            frozen = False
             while self._running and self._proc and self._proc.poll() is None:
                 if not announced and self.buffered_seconds() > 0:
                     announced = True
                     failures = 0
                     self._set_state("recording", tr("Recording ({encoder})", encoder=self.encoder))
-                if not announced and time.monotonic() - self.started_at > self.FIRST_SEGMENT_TIMEOUT:
+                if not announced and time.monotonic() - self.started_at > self.FIRST_SEGMENT_TIMEOUT \
+                        and not self._locked():
                     stalled = True
                     self._stderr_tail.append(tr("No segment produced: incompatible encoder?"))
+                    break
+                if announced and self._last_segment_age() > self.FROZEN_TIMEOUT:
+                    frozen = True
                     break
                 time.sleep(0.25)
             if not self._running:
                 return
+            if frozen or self._locked():
+                # Not the encoder or the capture method: no failure counted, no fallback.
+                log.warning("No new segment for %.0f s (screen capture frozen%s): restarting FFmpeg",
+                            self._last_segment_age(), ", session locked" if self._locked() else "")
+                self._kill_process()
+                self._set_state("starting", tr("Screen capture frozen: restarting the buffer…"))
+                time.sleep(1.0)
+                continue
             failures += 1
             tail = "\n".join(list(self._stderr_tail)[-6:])
             log.warning("FFmpeg stopped (attempt %d):\n%s", failures, tail)

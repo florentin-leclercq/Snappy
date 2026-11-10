@@ -584,6 +584,9 @@ STRINGS: dict[str, str] = {
     "No recording in progress.": "Aucun enregistrement en cours.",
     "The recording is empty.": "L'enregistrement est vide.",
     "Version {version}": "Version {version}",
+    "Screen locked: the buffer starts once it is unlocked…":
+        "Écran verrouillé : le buffer démarre dès le déverrouillage…",
+    "Screen capture frozen: restarting the buffer…": "Capture d'écran figée : redémarrage du buffer…",
     "Updating Snappy": "Mise à jour de Snappy",
     "Downloading Snappy {version}…": "Téléchargement de Snappy {version}…",
     "Installing Snappy {version}…": "Installation de Snappy {version}…",

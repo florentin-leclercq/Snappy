@@ -89,6 +89,33 @@ def enable_dpi_awareness() -> None:
 # --------------------------------------------------------------------------
 # Foreground application (to name / group the clips)
 # --------------------------------------------------------------------------
+def session_locked() -> bool:
+    """The lock screen (Winlogon secure desktop) or a UAC prompt is in front: Desktop Duplication
+    does not see the user's desktop, and can freeze on the lock screen. The input desktop is then
+    not the user's ("Default"), or cannot even be opened (access denied). Any other failure counts
+    as unlocked: the buffer must never wait for nothing."""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.OpenInputDesktop.restype = wintypes.HANDLE
+    user32.OpenInputDesktop.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    user32.GetUserObjectInformationW.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+                                                 ctypes.POINTER(wintypes.DWORD)]
+    user32.CloseDesktop.argtypes = [wintypes.HANDLE]
+    desktop = user32.OpenInputDesktop(0, False, 0x0001)          # DESKTOP_READOBJECTS
+    if not desktop:
+        return ctypes.get_last_error() == 5                        # ERROR_ACCESS_DENIED: secure desktop
+    try:
+        name = ctypes.create_unicode_buffer(256)
+        needed = wintypes.DWORD()
+        if user32.GetUserObjectInformationW(desktop, 2, name, ctypes.sizeof(name), ctypes.byref(needed)):  # UOI_NAME
+            return name.value.lower() != "default"
+        return False
+    finally:
+        user32.CloseDesktop(desktop)
+
+
 _IGNORED_APPS = {"explorer", "snappy", "python", "pythonw", "searchhost", "shellexperiencehost"}
 
 
